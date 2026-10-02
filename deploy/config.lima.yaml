@@ -1,4 +1,7 @@
 # Demo configuration for a Lima VM on macOS: ISE simulator + IPFIX generator, Ollama on the Mac.
+ui:
+  language: fr
+
 llm:
   provider: ollama
   endpoint: http://host.lima.internal:11434
@@ -7,7 +10,6 @@ llm:
   timeout_s: 120
   trigger: event
   learning_days: 0
-  language: fr
 
 ise:
   pan: ise-pan.lab.local

@@ -362,6 +362,14 @@ class Store:
             rows = cur.fetchall()
         return [self._row_to_proposal(cols, r) for r in rows]
 
+    def save_proposal_if_unchanged(self, p: dict, updated_at) -> dict | None:
+        """Save ``p`` only if the stored proposal was not modified since ``updated_at`` (else None)."""
+        with self.lock:
+            current = self.proposal(p["id"])
+            if current is None or current["updated_at"] != updated_at:
+                return None
+            return self.save_proposal(p)
+
     def proposal(self, pid: str) -> dict | None:
         with self.lock:
             cur = self.conn.execute("SELECT * FROM proposals WHERE id = ?", [pid])

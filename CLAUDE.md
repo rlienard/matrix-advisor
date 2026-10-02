@@ -89,8 +89,13 @@ MA_CONFIG_TEMPLATE=/app/deploy/config.demo.yaml docker compose --profile demo --
   « En ligne », « Cisco ISE : En ligne (synchro …) »). UI text lives in `frontend/src/messages.ts` (`en` is
   type-checked against `fr`); API messages in `backend/matrix_advisor/i18n.py` (`Message(key, …)`). The language
   is one global setting, `ui.language` (Configuration > Language tab), returned by `/api/auth/me` for the UI and
-  used to render API messages; there is no per-browser switch. Heuristic risk reasons and the fallback
-  justification follow `llm.language` (French for `fr`, English otherwise) because they are stored with the proposal.
+  used to render API messages and to write proposal justifications (LLM and heuristics); there is no
+  per-browser switch and no separate justification language (a legacy `llm.language` is migrated on load).
+  Each proposal records its `features.language`. `Advisor.refresh_open` (end of every advisor run, woken on a
+  language change and when the LLM comes back) re-analyses pending proposals written in another language or
+  without the LLM, and only translates decided ones (`prompts.translate_prompt`; risk/recommendation unchanged).
+  A model-written text is never replaced by heuristics: it waits for the LLM. Writes use
+  `store.save_proposal_if_unchanged` so an approval made while the model answers is never overwritten.
 - Keep `frontend/src/acl.ts` and `backend/matrix_advisor/policy/acl.py` behaviourally identical, messages included
   in both languages; a change to either needs a case in `backend/tests/fixtures/acl_parity.json` (optional `"lang"`),
   which both test suites assert.

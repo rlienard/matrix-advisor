@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-LANG = {"fr": "French", "en": "English", "de": "German", "es": "Spanish", "it": "Italian", "nl": "Dutch"}
+LANG = {"fr": "French", "en": "English"}
 
 SYSTEM = """You are a network security analyst helping an administrator move a Cisco TrustSec
 (SD-Access) policy matrix to default-deny. For one source group -> destination group pair you
@@ -28,8 +28,19 @@ Rules: do not invent facts that are not in the input; if heuristic signals flag 
 rate the risk lower than they do; keep the justification under 60 words."""
 
 
+TRANSLATE = """You translate the justification a network security analyst wrote for a Cisco TrustSec
+contract proposal. Translate it into LANGUAGE. Keep the meaning, the tone and every technical term,
+group name, port and number unchanged; do not add or remove anything.
+
+Answer with one JSON object and nothing else: {"justification": "<the translation>"}"""
+
+
 def system_prompt(language: str) -> str:
     return SYSTEM.replace("LANGUAGE", LANG.get(language, language))
+
+
+def translate_prompt(language: str) -> str:
+    return TRANSLATE.replace("LANGUAGE", LANG.get(language, language))
 
 
 def user_prompt(features: dict, assessment: dict, proposal: dict) -> str:

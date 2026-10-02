@@ -8,11 +8,12 @@ risk opinion and a human-readable justification; heuristics remain the floor.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timedelta
 
 from ..config import ConfigStore
-from ..i18n import content_lang, message_of
+from ..i18n import message_of
 from ..ise.service import ISEService
 from ..policy import acl
 from ..policy.impact import new_contract_name
@@ -35,6 +36,7 @@ class LLMHolder:
         self.config = config
         self.client = LLMClient(config.settings.llm)
         self.status = {"online": None, "last_check": None, "error": None, "latency_ms": None}
+        self.on_online = None  # called when the model answers again after being unreachable
         config.on_change(self._on_change)
 
     def _on_change(self, old, new) -> None:
@@ -45,7 +47,10 @@ class LLMHolder:
     async def check(self) -> None:
         try:
             res = await self.client.ping()
+            was_online = self.status["online"]
             self.status.update(online=True, error=None, latency_ms=res["latency_ms"])
+            if not was_online and self.on_online:
+                self.on_online()
         except LLMError as e:
             self.status.update(online=False, error=message_of(e))
         self.status["last_check"] = utcnow()
@@ -64,6 +69,12 @@ class Advisor:
         self.llm = llm
         self.last_run: datetime | None = None
         self._wake = asyncio.Event()
+        llm.on_online = self.wake
+        config.on_change(self._on_change)
+
+    def _on_change(self, old, new) -> None:
+        if old.ui.language != new.ui.language:
+            self.wake()  # proposals are rewritten in the new language on the next run
 
     # ------------------------------------------------------------ learning phase
     def learning(self) -> dict:
@@ -186,7 +197,7 @@ class Advisor:
             "activity": obs.get("activity") or {},
             "cell_contracts": cov["contracts"],
         }
-        lang = content_lang(settings.llm.language)
+        lang = settings.ui.language
         assessment = risk.assess(features, lang)
         proposal = {
             "src": src, "dst": dst, "kind": kind, "base_contract": base.name if base else None,
@@ -195,7 +206,7 @@ class Advisor:
             "cell_fingerprint": m.cell_fingerprint(src, dst),
             "risk": assessment["risk"], "recommendation": assessment["recommendation"],
             "justification": risk.fallback_justification(features, assessment, kind, base.name if base else None, lang),
-            "features": {**features, "heuristics": assessment["reasons"],
+            "features": {**features, "heuristics": assessment["reasons"], "language": lang,
                          "new_name": new_contract_name(settings.ise.sgacl_prefix, src, dst,
                                                        {a.name for a in m.sgacls.values()})},
             "llm_used": False,
@@ -207,7 +218,7 @@ class Advisor:
         assessment = {"risk": proposal["risk"], "reasons": features["heuristics"]}
         try:
             out = await self.llm.client.complete_json(
-                prompts.system_prompt(self.config.settings.llm.language),
+                prompts.system_prompt(self.config.settings.ui.language),
                 prompts.user_prompt(features, assessment, proposal),
             )
         except LLMError as e:
@@ -271,8 +282,75 @@ class Advisor:
             created += 1
             log.info("proposal %s %s -> %s (%s, risk %s)", proposal["kind"], src, dst,
                      ",".join(proposal["specs"]), proposal["risk"])
+        await self.refresh_open(MAX_LLM_CALLS_PER_RUN - llm_calls)
         self.last_run = utcnow()
         return created
+
+    async def translate(self, text: str, language: str) -> str | None:
+        """The model's translation of a justification, or None if it does not answer."""
+        try:
+            out = await self.llm.client.complete_json(prompts.translate_prompt(language),
+                                                      json.dumps({"justification": text}, ensure_ascii=False))
+        except LLMError as e:
+            log.info("LLM unavailable, translation postponed: %s", e)
+            return None
+        text = out.get("justification")
+        return text.strip() if isinstance(text, str) and text.strip() else None
+
+    async def refresh_open(self, budget: int) -> int:
+        """Bring stored analyses up to date. Returns the LLM calls made.
+
+        - Pending proposals written in another language than ``ui.language``, or heuristic-only although
+          the LLM now answers (it was down when they were created), are re-analysed: risk,
+          recommendation, justification and reasons change; the SGACL, the edit, the mode and the id stay.
+        - Decided proposals (approved, rejected) written in another language are translated: only the
+          text changes, never the risk or recommendation the decision was taken on.
+        A text written by the model is never replaced by bare heuristics: without an answer it waits.
+        """
+        language = self.config.settings.ui.language
+        online = bool(self.llm.status["online"])
+        calls = 0
+        todo = [p for p in self.store.proposals() if p["status"] != "superseded"]
+        todo.sort(key=lambda p: p["status"] != "pending")  # pending first: they still need a decision
+        for p in todo:
+            features = p["features"] or {}
+            # Proposals created before the language was stamped were written in the default, French.
+            stale_lang = features.get("language", "fr") != language
+            pending = p["status"] == "pending"
+            if not stale_lang and (not pending or p["llm_used"] or not online):
+                continue
+            if p["llm_used"] and not (online and calls < budget):
+                continue  # rewriting only the heuristics would drop the model's text: wait for it
+            assessment = risk.assess(features, language)
+            new = {**p, "features": {**features, "heuristics": assessment["reasons"], "language": language}}
+            if pending:
+                new.update(risk=assessment["risk"], recommendation=assessment["recommendation"], llm_used=False,
+                           justification=risk.fallback_justification(features, assessment, p["kind"],
+                                                                     p["base_contract"], language))
+                if online and calls < budget:
+                    new = await self.enrich_with_llm(new)
+                    calls += 1
+                    online = new["llm_used"]  # no answer: do not insist during this run
+                if p["llm_used"] and not new["llm_used"]:
+                    continue
+                if not new["llm_used"] and not stale_lang:
+                    continue  # nothing new without the model
+            elif p["llm_used"]:
+                text = await self.translate(p["justification"], language)
+                calls += 1
+                if text is None:
+                    online = False
+                    continue
+                new["justification"] = text
+            else:
+                new["justification"] = risk.fallback_justification(features, assessment, p["kind"],
+                                                                   p["base_contract"], language)
+            # The administrator may have decided or edited it while the model was answering.
+            if self.store.save_proposal_if_unchanged(new, p["updated_at"]) is None:
+                continue
+            log.info("proposal %s -> %s (%s) rewritten in %s (%s)", p["src"], p["dst"], p["status"], language,
+                     "llm" if new["llm_used"] else "heuristics")
+        return calls
 
     def wake(self) -> None:
         self._wake.set()

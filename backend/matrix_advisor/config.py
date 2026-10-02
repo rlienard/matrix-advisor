@@ -43,7 +43,6 @@ class LLMConfig(BaseModel):
     trigger: Literal["event", "scheduled"] = "event"
     scheduled_minutes: int = Field(60, ge=5, le=1440)
     learning_days: int = Field(14, ge=0, le=90)
-    language: str = "fr"
     # Not configurable on purpose: the model only ever sees SGT names, ports and volumes.
     send_ip_addresses: Literal[False] = False
 
@@ -126,7 +125,8 @@ class ServerConfig(BaseModel):
 
 
 class UIConfig(BaseModel):
-    # Language of the web UI and of API messages, for every user (set in Configuration > Language).
+    # Language of the web UI, API messages and proposal justifications, for every user
+    # (set in Configuration > Language).
     language: Literal["fr", "en"] = "fr"
 
 
@@ -191,6 +191,10 @@ class ConfigStore:
         if self.path.exists():
             raw = yaml.safe_load(self.path.read_text()) or {}
         data = _expand_env(raw)
+        # Before ui.language was the only language setting, justifications followed llm.language.
+        old = (data.get("llm") or {}).pop("language", None)
+        if old in ("fr", "en") and not (data.get("ui") or {}).get("language"):
+            data.setdefault("ui", {})["language"] = old
         stored = self._read_secrets()
         for dotted, env in SECRET_FIELDS.items():
             if os.environ.get(env):

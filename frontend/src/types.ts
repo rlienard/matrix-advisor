@@ -153,7 +153,6 @@ export interface Config {
     trigger: "event" | "scheduled";
     scheduled_minutes: number;
     learning_days: number;
-    language: string;
     send_ip_addresses: false;
   };
   ise: {

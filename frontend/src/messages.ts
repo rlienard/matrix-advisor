@@ -300,11 +300,8 @@ const fr = {
       desc: "Réglage global : il s’applique à tous les utilisateurs et à tous les navigateurs, page de connexion comprise.",
       interface: "Interface",
       uiLanguage: "Langue de l’interface",
-      uiLanguageHelp: "Écrans, messages d’erreur et résultats des tests de connexion",
-      proposals: "Propositions de l’agent",
-      justification: "Langue des justifications",
-      justificationHelp:
-        "Texte rédigé par le modèle et enregistré avec chaque proposition ; l’analyse heuristique est en français ou en anglais",
+      uiLanguageHelp:
+        "Écrans, messages d’erreur, résultats des tests de connexion et justifications de l’agent. Changer de langue traduit aussi les justifications déjà enregistrées, décisions comprises",
     },
     collector: {
       label: "Collecteur NetFlow",
@@ -635,10 +632,8 @@ const en: Messages = {
       desc: "Global setting: it applies to every user and every browser, login page included.",
       interface: "Interface",
       uiLanguage: "Interface language",
-      uiLanguageHelp: "Screens, error messages and connection-test results",
-      proposals: "Agent proposals",
-      justification: "Justification language",
-      justificationHelp: "Text written by the model and stored with each proposal; the heuristic analysis is in French or English",
+      uiLanguageHelp:
+        "Screens, error messages, connection-test results and the agent’s justifications. Changing the language also translates the stored justifications, decisions included",
     },
     collector: {
       label: "NetFlow collector",

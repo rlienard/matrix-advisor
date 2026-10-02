@@ -222,8 +222,9 @@ cd frontend && npm install && npm run dev
   A job that runs less often than that, or has not run yet, is not protected: the dashboard warns
   until 30 days have been observed, and cloning by default limits the blast radius.
 - **Single matrix**, IPv4 SGACL generation, one administrator account.
-- **UI language**: French or English, one global setting (`ui.language`, Configuration > Language) for every
-  user and for API messages. Proposal justifications follow `llm.language`, set in the same tab.
+- **Language**: French or English, one global setting (`ui.language`, Configuration > Language) for every
+  user: web UI, API messages and agent justifications. Changing it rewrites the stored justifications: pending
+  proposals are re-analysed, decided ones are only translated (their risk and recommendation do not change).
 - The ISE simulator implements just enough of ERS/pxGrid for demos and tests; it is not a reference.
 
 ## License

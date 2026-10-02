@@ -3,7 +3,7 @@
 # /data/secrets.json (0600) when entered in the web UI.
 
 ui:
-  language: fr                  # fr | en: web UI and API messages, for every user
+  language: fr                  # fr | en: web UI, API messages and agent justifications, for every user
 
 llm:
   provider: ollama              # ollama | openai (vLLM, LM Studio…) | anthropic | azure
@@ -14,7 +14,6 @@ llm:
   timeout_s: 60
   trigger: event                # event: analyse as soon as a new SGT pair appears
   learning_days: 14             # observe silently before proposing anything
-  language: fr
 
 ise:
   pan: ise-pan.example.local
