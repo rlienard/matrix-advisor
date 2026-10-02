@@ -141,6 +141,7 @@ export interface Status {
 
 // Configuration as returned by GET /api/config (secrets masked).
 export interface Config {
+  ui: { language: "fr" | "en" };
   llm: {
     provider: "ollama" | "openai" | "anthropic" | "azure";
     endpoint: string;

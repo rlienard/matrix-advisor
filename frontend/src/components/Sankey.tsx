@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import type { Link } from "../types";
-import { STATUS, fmt } from "../util";
+import { useI18n } from "../i18n";
 
 const W = 1000;
 const NODE_W = 12;
@@ -19,6 +19,7 @@ const COLORS: Record<string, string> = {
 };
 
 export default function Sankey({ links, selected, matches, onSelect }: Props) {
+  const { m, fmt } = useI18n();
   const layout = useMemo(() => {
     const total = (key: "src" | "dst", name: string) => links.filter((l) => l[key] === name).reduce((t, l) => t + l.flows, 0);
     const srcs = [...new Set(links.map((l) => l.src))].sort((a, b) => total("src", b) - total("src", a));
@@ -53,7 +54,7 @@ export default function Sankey({ links, selected, matches, onSelect }: Props) {
     return { left: place(left, "sy"), right: place(right, "dy"), ys, H };
   }, [links]);
 
-  if (!links.length) return <div className="empty">Aucun flux sur cette période.</div>;
+  if (!links.length) return <div className="empty">{m.sankey.empty}</div>;
   const xm = W / 2;
   const f = (v: number) => v.toFixed(1);
   const halo = { paintOrder: "stroke", stroke: "var(--card)", strokeWidth: 4, strokeLinejoin: "round" } as const;
@@ -61,7 +62,7 @@ export default function Sankey({ links, selected, matches, onSelect }: Props) {
   return (
     <div style={{ overflowX: "auto" }}>
       <svg viewBox={`0 0 ${W} ${layout.H}`} style={{ display: "block", width: "100%", minWidth: 640, height: "auto" }}
-        role="img" aria-label="Diagramme de Sankey des flux entre groupes sources et destinations">
+        role="img" aria-label={m.sankey.aria}>
         {links.map((l) => {
           const p = layout.ys[l.id];
           const a = p.sy!, b = p.sy! + p.w, c = p.dy!, d = p.dy! + p.w;
@@ -76,7 +77,7 @@ export default function Sankey({ links, selected, matches, onSelect }: Props) {
               stroke={l.status === "partial" && match ? "var(--pend)" : "none"} strokeWidth={1.5} strokeDasharray="5 3"
               style={{ cursor: "pointer", transition: "fill-opacity .15s" }}
               onClick={() => onSelect(l.id)}>
-              <title>{`${l.src} → ${l.dst} · ${fmt(l.flows)} flux · ${STATUS[l.status].label}`}</title>
+              <title>{`${l.src} → ${l.dst} · ${m.sankey.flows(fmt(l.flows))} · ${m.status[l.status]}`}</title>
             </path>
           );
         })}
@@ -86,7 +87,7 @@ export default function Sankey({ links, selected, matches, onSelect }: Props) {
             <text x={n.left ? NODE_W + 8 : W - NODE_W - 8} y={n.y + n.h / 2 - 1} textAnchor={n.left ? "start" : "end"}
               style={{ ...halo, fill: "var(--text)", font: "600 14px var(--sans)" }}>{n.name}</text>
             <text x={n.left ? NODE_W + 8 : W - NODE_W - 8} y={n.y + n.h / 2 + 13} textAnchor={n.left ? "start" : "end"}
-              style={{ ...halo, fill: "var(--text-3)", font: "400 11px var(--mono)" }}>{fmt(n.flows)} flux</text>
+              style={{ ...halo, fill: "var(--text-3)", font: "400 11px var(--mono)" }}>{m.sankey.flows(fmt(n.flows))}</text>
           </g>
         ))}
       </svg>

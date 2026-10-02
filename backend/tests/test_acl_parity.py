@@ -15,8 +15,9 @@ CASES = json.loads((Path(__file__).parent / "fixtures" / "acl_parity.json").read
 
 @pytest.mark.parametrize("case", CASES, ids=[c["name"] for c in CASES])
 def test_acl_parity(case):
-    res = acl.parse(case["text"])
+    lang = case.get("lang", "fr")
+    res = acl.parse(case["text"], lang)
     assert [{"action": r.action, "proto": r.proto, "lo": r.lo, "hi": r.hi} for r in res.rules] == case["rules"]
     assert res.errors == case["errors"]
-    assert acl.validate(case["text"], case["observed"]) == case["validate"]
+    assert acl.validate(case["text"], case["observed"], lang) == case["validate"]
     assert {s: acl.allows(res.rules, s) for s in case["allows"]} == case["allows"]

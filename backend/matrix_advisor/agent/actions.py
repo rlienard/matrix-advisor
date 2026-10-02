@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 
 from ..config import ConfigStore
+from ..i18n import Message, message_of
 from ..ise.client import ISEError
 from ..ise.service import ISEService
 from ..policy import acl
@@ -46,21 +47,21 @@ class Actions:
     def _get(self, pid: str) -> dict:
         p = self.store.proposal(pid)
         if not p:
-            raise ActionError("Proposition introuvable.", 404)
+            raise ActionError(Message("proposal_not_found"), 404)
         return p
 
     def _pending(self, pid: str) -> dict:
         p = self._get(pid)
         if p["status"] != "pending":
-            raise ActionError(f"Proposition déjà traitée ({p['status']}).", 409)
+            raise ActionError(Message("proposal_decided", status=p["status"]), 409)
         return p
 
     # ------------------------------------------------------------ analysis
-    def analyse(self, p: dict, text: str | None = None) -> dict:
+    def analyse(self, p: dict, text: str | None = None, lang: str = "fr") -> dict:
         """Validation, shared-contract impact and write mode for a (possibly edited) proposal."""
         m = self.ise.matrix
         final = text if text is not None else (p.get("edited_acl") or p["proposed_acl"])
-        validation = acl.validate(final, p["specs"]) if p["kind"] != "external" else \
+        validation = acl.validate(final, p["specs"], lang) if p["kind"] != "external" else \
             {"errors": [], "warns": [], "infos": []}
         edited = _norm(final) != _norm(p["proposed_acl"])
         base = m.sgacls.get(p.get("base_sgacl_id") or "") if p.get("base_sgacl_id") else None
@@ -91,18 +92,18 @@ class Actions:
         }
 
     # ------------------------------------------------------------ edits
-    def save_edit(self, pid: str, text: str | None) -> dict:
+    def save_edit(self, pid: str, text: str | None, lang: str = "fr") -> dict:
         p = self._pending(pid)
         if text is not None:
-            res = acl.parse(text)
+            res = acl.parse(text, lang)
             if res.errors:
-                raise ActionError("La SGACL contient des erreurs.", 400, {"errors": res.errors})
+                raise ActionError(Message("acl_has_errors"), 400, {"errors": res.errors})
         edited = None if text is None or _norm(text) == _norm(p["proposed_acl"]) else text
         return self.store.save_proposal({**p, "edited_acl": edited})
 
     def set_mode(self, pid: str, mode: str) -> dict:
         if mode not in ("clone", "inplace"):
-            raise ActionError("Mode inconnu.")
+            raise ActionError(Message("unknown_mode"))
         p = self._pending(pid)
         return self.store.save_proposal({**p, "mode": mode})
 
@@ -116,24 +117,22 @@ class Actions:
     def reopen(self, pid: str, actor: str) -> dict:
         p = self._get(pid)
         if p["status"] != "rejected":
-            raise ActionError("Seule une proposition rejetée peut être rouverte.", 409)
+            raise ActionError(Message("reopen_rejected_only"), 409)
         p = self.store.save_proposal({**p, "status": "pending", "decided_at": None, "decided_by": None})
         self.store.audit(actor, "reopen", {"proposal": pid})
         return p
 
     async def approve(self, pid: str, actor: str, text: str | None = None, mode: str | None = None,
-                      merge: bool = False) -> dict:
+                      merge: bool = False, lang: str = "fr") -> dict:
         p = self._pending(pid)
         if p["kind"] == "external":
-            raise ActionError("Source ou destination sans SGT : aucune cellule TrustSec ne peut porter ce contrat. "
-                              "Traitez ce flux sur le pare-feu de sortie, ou rejetez la proposition.", 422)
-        info = self.analyse(p, text)
+            raise ActionError(Message("external_no_cell"), 422)
+        info = self.analyse(p, text, lang)
         if info["validation"]["errors"]:
-            raise ActionError("La SGACL contient des erreurs.", 400, {"errors": info["validation"]["errors"]})
+            raise ActionError(Message("acl_has_errors"), 400, {"errors": info["validation"]["errors"]})
         mode = mode or p.get("mode") or info["default_mode"]
         if info["changes_base"] and mode == "inplace" and not info["inplace_allowed"]:
-            raise ActionError("Modification sur place refusée : elle bloquerait du trafic d’autres paires.", 409,
-                              {"impacts": info["impacts"]})
+            raise ActionError(Message("inplace_refused"), 409, {"impacts": info["impacts"]})
         ise_cfg = self.config.settings.ise
         status = "MONITOR" if ise_cfg.write_mode == "monitor" else "ENABLED"
         final = _norm(info["acl"])
@@ -143,12 +142,12 @@ class Actions:
             m = self.ise.matrix
             src, dst = m.sgt_by_name(p["src"]), m.sgt_by_name(p["dst"])
             if not src or not dst:
-                raise ActionError("SGT inconnu dans ISE : resynchronisez la matrice.", 409)
+                raise ActionError(Message("unknown_sgt"), 409)
             client = self.ise.client
             try:
                 fresh = await client.fresh_cell(m, p["src"], p["dst"])
             except ISEError as e:
-                raise ActionError(f"Lecture de la cellule impossible : {e}", 502) from e
+                raise ActionError(Message("cell_read_failed", error=message_of(e)), 502) from e
             fp = fresh.fingerprint() if fresh else NO_CELL_FINGERPRINT
             if fp != p["cell_fingerprint"] and not merge:
                 names = []
@@ -161,7 +160,7 @@ class Actions:
                             pass
                     names.append(sg.name if sg else sid)
                 raise ActionError(
-                    "La cellule a été modifiée dans ISE depuis la proposition. Rien n’a été écrit.", 409,
+                    Message("cell_changed"), 409,
                     {"conflict": True, "current_contracts": names,
                      "current_status": fresh.status if fresh else None},
                 )
@@ -187,15 +186,14 @@ class Actions:
                 else:
                     current = await client.fresh_sgacl(base.id)
                     if _norm(current.content) != _norm(base.content):
-                        raise ActionError(f"{base.name} a été modifié dans ISE depuis la proposition.", 409,
-                                          {"conflict": True})
+                        raise ActionError(Message("sgacl_changed", name=base.name), 409, {"conflict": True})
                     await client.update_sgacl(current, final)
                     ids = existing + ([base.id] if base.id not in existing else [])
                     result.update(action="update", sgacl=base.name)
                 cell_id = await client.upsert_cell(fresh, src.id, dst.id, ids, cell_status, desc)
                 result["cell_id"] = cell_id
             except ISEError as e:
-                raise ActionError(f"Écriture refusée par ISE : {e}", 502) from e
+                raise ActionError(Message("ise_write_refused", error=message_of(e)), 502) from e
             try:
                 await self.ise.reconcile()
             except ISEError:

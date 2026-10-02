@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { ApiError, post } from "../api";
+import { useI18n } from "../i18n";
 
 export default function Login({ onLogin }: { onLogin: () => void }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const { m } = useI18n();
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -14,7 +16,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
       await post("/auth/login", { password });
       onLogin();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Connexion impossible.");
+      setError(err instanceof ApiError ? err.message : m.login.failed);
     } finally {
       setBusy(false);
     }
@@ -27,13 +29,13 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
         <p>SD-Access · Default-Deny</p>
       </div>
       <div className="field">
-        <label className="field-label" htmlFor="pw">Mot de passe administrateur</label>
+        <label className="field-label" htmlFor="pw">{m.login.password}</label>
         <input id="pw" className="input" type="password" autoComplete="current-password" autoFocus
           value={password} onChange={(e) => setPassword(e.target.value)} />
-        <span className="help">Au premier démarrage, il est généré dans le fichier initial-admin-password du dossier de données.</span>
+        <span className="help">{m.login.help}</span>
       </div>
       {error && <div className="note err" role="alert">{error}</div>}
-      <button className="btn primary" type="submit" disabled={busy || !password}>Se connecter</button>
+      <button className="btn primary" type="submit" disabled={busy || !password}>{m.login.submit}</button>
     </form>
   );
 }

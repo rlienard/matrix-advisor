@@ -173,3 +173,39 @@ def test_rare_flow_of_another_pair_blocks_in_place_change(client):
     analysis = client.post(f"/api/proposals/{p['id']}/analyse", json={"acl": "permit tcp dst eq 9100\ndeny ip"}).json()
     assert analysis["impacts"] == [{"src": "Employees", "dst": "Print_Servers", "spec": "TCP/631", "flows": 3}]
     assert not analysis["inplace_allowed"]
+
+
+def _set_language(c, lang):
+    cfg = c.get("/api/config").json()
+    cfg["ui"]["language"] = lang
+    assert c.put("/api/config", json={"config": cfg}).json()["ui"]["language"] == lang
+
+
+def test_api_messages_follow_the_global_language(client):
+    p = _props(client)[("Contractors", "Finance_DB")]
+    assert client.get("/api/auth/me").json() == {"user": "admin", "language": "fr"}
+    r = client.put(f"/api/proposals/{p['id']}/edit", json={"acl": "permit everything"})
+    assert r.json()["detail"] == "La SGACL contient des erreurs."  # French by default, as before
+    cfg = client.get("/api/config").json()
+    assert client.put("/api/config", json={"config": {**cfg, "ui": {"language": "de"}}}).status_code == 422
+    _set_language(client, "en")
+    # A browser asking for French does not override the global setting.
+    r = client.put(f"/api/proposals/{p['id']}/edit", json={"acl": "permit everything"},
+                   headers={"Accept-Language": "fr"})
+    assert r.json() == {"detail": "The SGACL contains errors.",
+                        "errors": ["Line 1: “permit everything” is not a recognised ACE."]}
+    assert client.get("/api/proposals/nope").json()["detail"] == "Proposal not found."
+    analysis = client.post(f"/api/proposals/{p['id']}/analyse", json={"acl": "permit tcp dst eq 1433"}).json()
+    assert analysis["validation"]["infos"] == ["No final “deny ip”: the default policy of the cell or the matrix applies."]
+    client.post("/api/auth/logout")
+    assert client.get("/api/auth/me").json() == {"user": None, "language": "en"}  # login page language
+    assert client.get("/api/status").json()["detail"] == "Authentication required."
+    assert client.post("/api/auth/login", json={"password": "x"}).json() == {"detail": "Incorrect password."}
+
+
+def test_ise_error_status_is_localised(client, sim_url):
+    _set_language(client, "en")
+    cfg = client.get("/api/config").json()
+    cfg["ise"]["openapi"]["password"] = "wrong"
+    r = client.post("/api/config/test/ise", json={"config": cfg})
+    assert r.json() == {"ok": False, "message": "OpenAPI: ISE refused the authentication (check the ERS user and its role)."}

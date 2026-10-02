@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 import httpx
 
 from ..config import ISEConfig
+from ..i18n import Message
 from ..policy.matrix import Cell, Matrix, Sgacl, Sgt
 
 log = logging.getLogger(__name__)
@@ -65,7 +66,7 @@ class ISEClient:
             except httpx.HTTPError as e:
                 raise ISEError(f"{method} {url}: {e.__class__.__name__}: {e}") from e
         if r.status_code == 401:
-            raise ISEError("Authentification refusée par ISE (vérifiez l’utilisateur ERS et son rôle).", 401)
+            raise ISEError(Message("ise_auth_refused"), 401)
         if r.status_code >= 400:
             detail = r.text[:300]
             raise ISEError(f"{method} {url} -> HTTP {r.status_code}: {detail}", r.status_code)

@@ -11,10 +11,10 @@ const { cases } = JSON.parse(readFileSync(fixture, "utf8"));
 
 for (const c of cases) {
   test(c.name, () => {
-    const { rules, errors } = parse(c.text);
+    const { rules, errors } = parse(c.text, c.lang);
     assert.deepEqual(rules, c.rules);
     assert.deepEqual(errors, c.errors);
-    assert.deepEqual(validate(c.text, c.observed), c.validate);
+    assert.deepEqual(validate(c.text, c.observed, c.lang), c.validate);
     assert.deepEqual(Object.fromEntries(Object.keys(c.allows).map((s) => [s, allows(rules, s)])), c.allows);
   });
 }

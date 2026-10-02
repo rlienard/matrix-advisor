@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { ApiError, get, post, put } from "../api";
+import { useI18n } from "../i18n";
+import { MESSAGES, type Messages } from "../messages";
 import type { Config } from "../types";
 
-type Tab = "llm" | "ise" | "collector";
+type Tab = "llm" | "ise" | "collector" | "lang";
 type Kind = "text" | "password" | "number" | "select" | "toggle" | "list";
 
 interface Field {
@@ -37,10 +39,14 @@ function setAt<T>(o: T, path: string, value: unknown): T {
   return out as T;
 }
 
-const isInt = (lo: number, hi: number) => (v: string) => (/^\d+$/.test(v) && +v >= lo && +v <= hi ? "" : `Entier entre ${lo} et ${hi}`);
-const host = (v: string) => (/^[A-Za-z0-9.:-]+$/.test(v) ? "" : "Nom d’hôte ou adresse IP attendu");
-const absPath = (v: string) => (v.startsWith("/") ? "" : "Chemin absolu attendu");
-const url = (v: string) => (/^https?:\/\/\S+$/.test(v) ? "" : "URL en http:// ou https:// attendue");
+function checks(s: Messages["settings"]) {
+  return {
+    isInt: (lo: number, hi: number) => (v: string) => (/^\d+$/.test(v) && +v >= lo && +v <= hi ? "" : s.intBetween(lo, hi)),
+    host: (v: string) => (/^[A-Za-z0-9.:-]+$/.test(v) ? "" : s.hostExpected),
+    absPath: (v: string) => (v.startsWith("/") ? "" : s.absPathExpected),
+    url: (v: string) => (/^https?:\/\/\S+$/.test(v) ? "" : s.urlExpected),
+  };
+}
 
 const SECRET_MASK = "********";
 
@@ -51,6 +57,8 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
   const [tests, setTests] = useState<Partial<Record<Tab, { st: "testing" | "ok" | "error"; msg: string }>>>({});
   const [msg, setMsg] = useState("");
   const [showYaml, setShowYaml] = useState(false);
+  const { m, setLang } = useI18n();
+  const s = m.settings;
   const [nodes, setNodes] = useState<{ st: "idle" | "loading" | "ok" | "error"; pan: string; list: { fqdn: string; ip: string; roles: string[]; services: string[] }[]; total: number; msg?: string }>({ st: "idle", pan: "", list: [], total: 0 });
 
   useEffect(() => {
@@ -72,120 +80,135 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
   const sections: Record<Tab, { label: string; title: string; desc: string; sections: Section[] }> | null = useMemo(() => {
     if (!cfg) return null;
     const cloud = cfg.llm.provider === "anthropic" || cfg.llm.provider === "azure";
+    const { isInt, host, absPath, url } = checks(s);
+    const L = s.llm, I = s.ise, C = s.collector, G = s.lang;
     return {
       llm: {
-        label: "Modèle IA", title: "Connexion au modèle IA",
-        desc: "Le modèle juge la plausibilité et rédige la justification. Il ne reçoit que des paires SGT, des ports et des volumes.",
+        label: L.label, title: L.title, desc: L.desc,
         sections: [
           {
-            title: "Fournisseur et modèle",
-            note: cloud ? { tone: "warn", text: "Fournisseur cloud : seuls des noms de SGT, des ports et des volumes quittent le réseau, jamais d’adresse IP. Pour un déploiement 100 % on-prem, choisissez Ollama ou vLLM." } : undefined,
+            title: L.provider,
+            note: cloud ? { tone: "warn", text: L.cloudNote } : undefined,
             fields: [
-              { path: "llm.provider", label: "Fournisseur", kind: "select", options: [["ollama", "Ollama (local)"], ["openai", "vLLM / API compatible OpenAI (local)"], ["anthropic", "Anthropic API (cloud)"], ["azure", "Azure OpenAI (cloud)"]] },
-              { path: "llm.endpoint", label: "URL du endpoint", required: true, mono: true, check: url, placeholder: "http://ollama:11434" },
-              { path: "llm.model", label: cfg.llm.provider === "azure" ? "Déploiement" : "Modèle", required: true, mono: true },
-              cfg.llm.provider !== "ollama" && { path: "llm.api_key", label: "Clé API", kind: "password", required: cfg.llm.provider !== "openai", help: "Stockée côté serveur, jamais renvoyée au navigateur" },
-              cfg.llm.provider === "azure" && { path: "llm.api_version", label: "Version d’API Azure", mono: true },
-              { path: "llm.temperature", label: "Température", kind: "number", mono: true, check: (v) => (+v >= 0 && +v <= 2 ? "" : "Valeur entre 0 et 2"), help: "Basse = propositions reproductibles" },
-              { path: "llm.timeout_s", label: "Timeout (s)", kind: "number", mono: true, check: isInt(1, 600) },
-              { path: "llm.language", label: "Langue des justifications", kind: "select", options: [["fr", "Français"], ["en", "English"], ["de", "Deutsch"], ["es", "Español"], ["it", "Italiano"], ["nl", "Nederlands"]] },
+              { path: "llm.provider", label: L.providerLabel, kind: "select", options: Object.entries(L.providers) },
+              { path: "llm.endpoint", label: L.endpoint, required: true, mono: true, check: url, placeholder: "http://ollama:11434" },
+              { path: "llm.model", label: cfg.llm.provider === "azure" ? L.deployment : L.model, required: true, mono: true },
+              cfg.llm.provider !== "ollama" && { path: "llm.api_key", label: L.apiKey, kind: "password", required: cfg.llm.provider !== "openai", help: L.apiKeyHelp },
+              cfg.llm.provider === "azure" && { path: "llm.api_version", label: L.apiVersion, mono: true },
+              { path: "llm.temperature", label: L.temperature, kind: "number", mono: true, check: (v) => (+v >= 0 && +v <= 2 ? "" : L.temperatureCheck), help: L.temperatureHelp },
+              { path: "llm.timeout_s", label: L.timeout, kind: "number", mono: true, check: isInt(1, 600) },
             ],
           },
           {
-            title: "Déclenchement de l’agent",
+            title: L.trigger,
             fields: [
-              { path: "llm.trigger", label: "Mode", kind: "select", options: [["event", "Événementiel : nouvelle paire SGT détectée"], ["scheduled", "Planifié"]] },
-              cfg.llm.trigger === "scheduled" && { path: "llm.scheduled_minutes", label: "Intervalle (min)", kind: "number", mono: true, check: isInt(5, 1440) },
-              { path: "llm.learning_days", label: "Phase d’apprentissage (jours)", kind: "number", mono: true, check: isInt(0, 90), help: "Aucune proposition pendant cette période" },
-              { path: "llm.send_ip_addresses", label: "Ne jamais envoyer d’adresse IP au modèle", kind: "toggle", disabled: true, help: "Toujours actif : la résolution IP → SGT se fait en amont, et chaque requête est contrôlée avant envoi." },
+              { path: "llm.trigger", label: L.mode, kind: "select", options: Object.entries(L.triggers) },
+              cfg.llm.trigger === "scheduled" && { path: "llm.scheduled_minutes", label: L.interval, kind: "number", mono: true, check: isInt(5, 1440) },
+              { path: "llm.learning_days", label: L.learning, kind: "number", mono: true, check: isInt(0, 90), help: L.learningHelp },
+              { path: "llm.send_ip_addresses", label: L.noIp, kind: "toggle", disabled: true, help: L.noIpHelp },
             ],
           },
         ],
       },
       ise: {
-        label: "Cisco ISE", title: "Connexion à Cisco ISE",
-        desc: "API ERS/OpenAPI pour lire et écrire la matrice TrustSec, pxGrid pour le contexte des endpoints et les notifications de changement.",
+        label: I.label, title: I.title, desc: I.desc,
         sections: [
           {
-            title: "ERS / OpenAPI · lecture et écriture de la matrice",
+            title: I.openapi,
             fields: [
-              { path: "ise.pan", label: "Nœud PAN (FQDN ou IP)", required: true, mono: true, check: host, placeholder: "ise-pan.example.local" },
-              { path: "ise.openapi.username", label: "Utilisateur API", required: true, mono: true, help: "Compte avec le rôle ERS Admin" },
-              { path: "ise.openapi.password", label: "Mot de passe", kind: "password", required: true, help: "Stocké côté serveur" },
-              { path: "ise.openapi.port", label: "Port HTTPS", kind: "number", mono: true, check: isInt(1, 65535) },
-              { path: "ise.openapi.verify_tls", label: "Vérifier le certificat TLS d’ISE", kind: "toggle", help: "À ne désactiver qu’en lab." },
-              { path: "ise.openapi.base_url", label: "URL de base (lab / simulateur)", mono: true, help: "Laisser vide en production : https://<PAN>:<port>" },
+              { path: "ise.pan", label: I.pan, required: true, mono: true, check: host, placeholder: "ise-pan.example.local" },
+              { path: "ise.openapi.username", label: I.user, required: true, mono: true, help: I.userHelp },
+              { path: "ise.openapi.password", label: I.password, kind: "password", required: true, help: I.passwordHelp },
+              { path: "ise.openapi.port", label: I.port, kind: "number", mono: true, check: isInt(1, 65535) },
+              { path: "ise.openapi.verify_tls", label: I.verifyTls, kind: "toggle", help: I.verifyTlsHelp },
+              { path: "ise.openapi.base_url", label: I.baseUrl, mono: true, help: I.baseUrlHelp },
             ],
           },
           {
-            title: "pxGrid · contexte des endpoints et notifications TrustSec",
+            title: I.pxgrid,
             action: "discover",
             fields: [
               discovered
-                ? { path: "ise.pxgrid.node", label: "Nœud pxGrid", kind: "select", required: true,
+                ? { path: "ise.pxgrid.node", label: I.node, kind: "select", required: true,
                     options: nodes.list.map((n) => [n.fqdn, `${n.fqdn} · ${n.ip} · ${[...n.roles, ...n.services].filter((x) => /admin|monitor|pxgrid|session/i.test(x)).join(" · ")}`] as [string, string]),
-                    help: "Seuls les nœuds avec le service pxGrid activé sont proposés" }
-                : { path: "ise.pxgrid.node", label: "Nœud pxGrid", mono: true, check: host, help: "Saisie manuelle, ou utilisez la découverte ci-dessus", placeholder: "ise-px1.example.local" },
-              { path: "ise.pxgrid.client_name", label: "Nom du client pxGrid", required: true, mono: true, help: "À approuver dans ISE au premier lancement" },
-              { path: "ise.pxgrid.auth", label: "Authentification", kind: "select", options: [["certificate", "Certificat client"], ["password", "Mot de passe pxGrid"]] },
-              cfg.ise.pxgrid.auth === "certificate" && { path: "ise.pxgrid.client_cert", label: "Certificat client (chemin)", mono: true, check: absPath },
-              cfg.ise.pxgrid.auth === "certificate" && { path: "ise.pxgrid.client_key", label: "Clé privée (chemin)", mono: true, check: absPath },
-              cfg.ise.pxgrid.auth === "password" && { path: "ise.pxgrid.password", label: "Mot de passe pxGrid", kind: "password", help: "Vide : un compte est créé et doit être approuvé dans ISE" },
-              { path: "ise.pxgrid.ca_cert", label: "CA d’ISE (chemin)", mono: true, help: "Optionnel si le magasin système suffit" },
-              { path: "ise.pxgrid.subscribe", label: "Abonnement websocket (sinon interrogation périodique)", kind: "toggle" },
-              { path: "ise.pxgrid.base_url", label: "URL de base pxGrid (lab / simulateur)", mono: true, help: "Laisser vide en production : https://<nœud>:8910" },
+                    help: I.nodeDiscoveredHelp }
+                : { path: "ise.pxgrid.node", label: I.node, mono: true, check: host, help: I.nodeManualHelp, placeholder: "ise-px1.example.local" },
+              { path: "ise.pxgrid.client_name", label: I.clientName, required: true, mono: true, help: I.clientNameHelp },
+              { path: "ise.pxgrid.auth", label: I.auth, kind: "select", options: Object.entries(I.auths) },
+              cfg.ise.pxgrid.auth === "certificate" && { path: "ise.pxgrid.client_cert", label: I.clientCert, mono: true, check: absPath },
+              cfg.ise.pxgrid.auth === "certificate" && { path: "ise.pxgrid.client_key", label: I.clientKey, mono: true, check: absPath },
+              cfg.ise.pxgrid.auth === "password" && { path: "ise.pxgrid.password", label: I.pxPassword, kind: "password", help: I.pxPasswordHelp },
+              { path: "ise.pxgrid.ca_cert", label: I.caCert, mono: true, help: I.caCertHelp },
+              { path: "ise.pxgrid.subscribe", label: I.subscribe, kind: "toggle" },
+              { path: "ise.pxgrid.base_url", label: I.pxBaseUrl, mono: true, help: I.pxBaseUrlHelp },
             ],
           },
           {
-            title: "Politique d’écriture",
+            title: I.writePolicy,
             note: cfg.ise.write_mode === "enforce"
-              ? { tone: "warn", text: "Mode enforce : une nouvelle cellule approuvée bloque immédiatement le trafic non autorisé." }
-              : { tone: "info", text: "Mode monitor : les nouvelles cellules sont écrites en MONITOR (les refus sont journalisés, rien n’est bloqué). Une cellule existante garde toujours son statut." },
+              ? { tone: "warn", text: I.enforceNote }
+              : { tone: "info", text: I.monitorNote },
             fields: [
-              { path: "ise.write_mode", label: "Mode d’écriture", kind: "select", options: [["monitor", "Monitor (recommandé pour démarrer)"], ["enforce", "Enforce"]] },
-              { path: "ise.sgacl_prefix", label: "Préfixe des SGACL créées", required: true, mono: true, check: (v) => (/^[A-Za-z][A-Za-z0-9_]*$/.test(v) ? "" : "Lettres, chiffres et _ uniquement"), help: "Nouveaux contrats et clones portent ce préfixe" },
-              { path: "ise.reconcile_minutes", label: "Réconciliation complète (min)", kind: "number", mono: true, check: isInt(1, 1440), help: "Rattrape les notifications pxGrid manquées" },
-              { path: "ise.matrix_default", label: "Politique par défaut de la matrice", kind: "select", options: [["deny", "Deny IP (cible)"], ["permit", "Permit IP (avant bascule)"]], help: "Sert à calculer ce qui serait bloqué" },
+              { path: "ise.write_mode", label: I.writeMode, kind: "select", options: Object.entries(I.writeModes) },
+              { path: "ise.sgacl_prefix", label: I.prefix, required: true, mono: true, check: (v) => (/^[A-Za-z][A-Za-z0-9_]*$/.test(v) ? "" : I.prefixCheck), help: I.prefixHelp },
+              { path: "ise.reconcile_minutes", label: I.reconcile, kind: "number", mono: true, check: isInt(1, 1440), help: I.reconcileHelp },
+              { path: "ise.matrix_default", label: I.matrixDefault, kind: "select", options: Object.entries(I.matrixDefaults), help: I.matrixDefaultHelp },
+            ],
+          },
+        ],
+      },
+      lang: {
+        label: G.label, title: G.title, desc: G.desc,
+        sections: [
+          {
+            title: G.interface,
+            fields: [
+              { path: "ui.language", label: G.uiLanguage, help: G.uiLanguageHelp, kind: "select",
+                options: [["fr", MESSAGES.fr.langName], ["en", MESSAGES.en.langName]] },
+            ],
+          },
+          {
+            title: G.proposals,
+            fields: [
+              { path: "llm.language", label: G.justification, help: G.justificationHelp, kind: "select",
+                options: [["fr", "Français"], ["en", "English"], ["de", "Deutsch"], ["es", "Español"], ["it", "Italiano"], ["nl", "Nederlands"]] },
             ],
           },
         ],
       },
       collector: {
-        label: "Collecteur NetFlow", title: "Collecteur NetFlow / IPFIX",
-        desc: "GoFlow2 reçoit les flux des switches et écrit du JSON. Le backend l’agrège dans DuckDB par paire SGT et archive les flux bruts en Parquet.",
+        label: C.label, title: C.title, desc: C.desc,
         sections: [
           {
-            title: "Réception (GoFlow2)",
+            title: C.reception,
             fields: [
-              { path: "collector.input_file", label: "Sortie JSON de GoFlow2", required: true, mono: true, check: absPath, help: "Chemin passé à -transport.file" },
-              { path: "collector.listen", label: "Adresse d’écoute", required: true, mono: true, check: host, help: "Informatif : à refléter dans les options de GoFlow2" },
-              { path: "collector.ipfix_port", label: "Port IPFIX (UDP)", kind: "number", mono: true, check: isInt(1, 65535) },
-              { path: "collector.netflow_v9_port", label: "Port NetFlow v9 (UDP)", kind: "number", mono: true,
-                check: (v) => (v === String(cfg.collector.ipfix_port) ? "Doit différer du port IPFIX" : isInt(1, 65535)(v)) },
-              { path: "collector.allowed_exporters", label: "Exporteurs autorisés", kind: "list", required: true, mono: true, help: "CIDR séparés par des virgules",
-                check: (v) => (v.split(",").every((x) => /^[0-9a-fA-F.:]+(\/\d{1,3})?$/.test(x.trim())) ? "" : "Format attendu : 10.10.0.0/16, 10.20.0.0/16") },
-              { path: "collector.sgt_source", label: "Attribution des SGT", kind: "select",
-                options: [["auto", "SGT exporté dans les flux, sinon adresse IP"], ["ip", "Adresse IP uniquement (pxGrid, SXP, liaisons statiques)"]],
-                help: "Champs Cisco CTS source/destination group-tag, avec deploy/goflow2/mapping.yaml" },
+              { path: "collector.input_file", label: C.inputFile, required: true, mono: true, check: absPath, help: C.inputFileHelp },
+              { path: "collector.listen", label: C.listen, required: true, mono: true, check: host, help: C.listenHelp },
+              { path: "collector.ipfix_port", label: C.ipfixPort, kind: "number", mono: true, check: isInt(1, 65535) },
+              { path: "collector.netflow_v9_port", label: C.v9Port, kind: "number", mono: true,
+                check: (v) => (v === String(cfg.collector.ipfix_port) ? C.v9PortCheck : isInt(1, 65535)(v)) },
+              { path: "collector.allowed_exporters", label: C.exporters, kind: "list", required: true, mono: true, help: C.exportersHelp,
+                check: (v) => (v.split(",").every((x) => /^[0-9a-fA-F.:]+(\/\d{1,3})?$/.test(x.trim())) ? "" : C.exportersCheck) },
+              { path: "collector.sgt_source", label: C.sgtSource, kind: "select", options: Object.entries(C.sgtSources), help: C.sgtSourceHelp },
             ],
           },
           {
-            title: "Stockage et agrégation",
+            title: C.storage,
             fields: [
-              { path: "collector.duckdb_path", label: "Base DuckDB", required: true, mono: true, check: absPath },
-              { path: "collector.parquet_dir", label: "Archive Parquet des flux bruts", required: true, mono: true, check: absPath },
-              { path: "collector.rotate_minutes", label: "Écriture d’un fichier Parquet toutes les (min)", kind: "number", mono: true, check: isInt(1, 1440) },
-              { path: "collector.retention_days", label: "Rétention (jours)", kind: "number", mono: true, check: isInt(1, 365) },
-              { path: "collector.aggregation_seconds", label: "Analyse des nouvelles paires toutes les (s)", kind: "number", mono: true, check: isInt(5, 3600) },
-              { path: "collector.stale_after_seconds", label: "Hors ligne après (s) sans flux", kind: "number", mono: true, check: isInt(30, 86400) },
+              { path: "collector.duckdb_path", label: C.duckdb, required: true, mono: true, check: absPath },
+              { path: "collector.parquet_dir", label: C.parquet, required: true, mono: true, check: absPath },
+              { path: "collector.rotate_minutes", label: C.rotate, kind: "number", mono: true, check: isInt(1, 1440) },
+              { path: "collector.retention_days", label: C.retention, kind: "number", mono: true, check: isInt(1, 365) },
+              { path: "collector.aggregation_seconds", label: C.aggregation, kind: "number", mono: true, check: isInt(5, 3600) },
+              { path: "collector.stale_after_seconds", label: C.stale, kind: "number", mono: true, check: isInt(30, 86400) },
             ],
           },
         ],
       },
     };
-  }, [cfg, discovered, nodes.list]);
+  }, [cfg, discovered, nodes.list, s]);
 
-  if (!cfg || !saved || !sections) return <div className="card">Chargement de la configuration…</div>;
+  if (!cfg || !saved || !sections) return <div className="card">{s.loading}</div>;
 
   const valueOf = (f: Field) => {
     const v = getAt(cfg, f.path);
@@ -196,12 +219,12 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
     if (f.kind === "toggle" || f.kind === "select") return "";
     const v = valueOf(f).trim();
     if (f.kind === "password" && v === SECRET_MASK) return "";
-    if (f.required && !v) return "Champ requis";
+    if (f.required && !v) return s.required;
     return v && f.check ? f.check(v) : "";
   };
   const fieldsOf = (t: Tab) => sections[t].sections.flatMap((s) => s.fields.filter(Boolean) as Field[]);
   const errCount = (t: Tab) => fieldsOf(t).filter((f) => errorOf(f)).length;
-  const totalErr = errCount("llm") + errCount("ise") + errCount("collector");
+  const totalErr = errCount("llm") + errCount("ise") + errCount("collector") + errCount("lang");
   const dirty = JSON.stringify(cfg) !== JSON.stringify(saved);
   const test = tests[tab];
 
@@ -212,8 +235,8 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
   };
 
   async function runTest() {
-    if (errCount(tab)) return setTests((x) => ({ ...x, [tab]: { st: "error", msg: "Corrigez les champs en erreur avant de tester la connexion." } }));
-    setTests((x) => ({ ...x, [tab]: { st: "testing", msg: "Test de connexion en cours…" } }));
+    if (errCount(tab)) return setTests((x) => ({ ...x, [tab]: { st: "error", msg: s.fixBeforeTest } }));
+    setTests((x) => ({ ...x, [tab]: { st: "testing", msg: s.testRunning } }));
     try {
       const r = await post<{ ok: boolean; message: string }>(`/config/test/${tab}`, { config: cfg });
       setTests((x) => ({ ...x, [tab]: { st: r.ok ? "ok" : "error", msg: r.message } }));
@@ -225,7 +248,7 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
   async function discover() {
     if (!cfg) return;
     if (["ise.pan", "ise.openapi.username", "ise.openapi.password"].some((p) => errorOf({ path: p, label: "", required: true }))) {
-      return setNodes({ st: "error", pan: cfg.ise.pan, list: [], total: 0, msg: "Renseignez d’abord le nœud PAN, l’utilisateur et le mot de passe API." });
+      return setNodes({ st: "error", pan: cfg.ise.pan, list: [], total: 0, msg: s.discoverNeedsCreds });
     }
     setNodes({ st: "loading", pan: cfg.ise.pan, list: [], total: 0 });
     try {
@@ -242,33 +265,34 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
       const r = await put<Config>("/config", { config: cfg });
       setSaved(r);
       setCfg(r);
-      setMsg("Configuration enregistrée · les services concernés redémarrent.");
+      setLang(r.ui.language);
+      setMsg(MESSAGES[r.ui.language].settings.saved); // the new language, not the one of this render
       onSaved();
     } catch (e) {
       const detail = e instanceof ApiError && Array.isArray(e.body.detail)
         ? (e.body.detail as { loc: string[]; msg: string }[]).map((d) => `${d.loc.join(".")} : ${d.msg}`).join(" · ")
         : (e as Error).message;
-      setMsg(`Enregistrement refusé : ${detail}`);
+      setMsg(s.saveRefused(detail));
     }
   }
 
   const discState = discovered ? "ok" : nodes.pan === cfg.ise.pan ? nodes.st : "idle";
-  const tabs: Tab[] = ["llm", "ise", "collector"];
+  const tabs: Tab[] = ["llm", "ise", "collector", "lang"];
 
   return (
-    <section className="card settings" aria-label="Configuration des connexions">
-      <nav aria-label="Sections de configuration">
-        <h2 style={{ marginBottom: 8 }}>Configuration</h2>
+    <section className="card settings" aria-label={s.aria}>
+      <nav aria-label={s.navAria}>
+        <h2 style={{ marginBottom: 8 }}>{s.title}</h2>
         {tabs.map((t) => {
           const st = tests[t];
           const e = errCount(t);
-          const color = e ? "var(--danger)" : !st ? "#596069" : st.st === "ok" ? "var(--ok)" : st.st === "testing" ? "var(--pend)" : "var(--danger)";
+          const color = e ? "var(--danger)" : t === "lang" || !st ? "#596069" : st.st === "ok" ? "var(--ok)" : st.st === "testing" ? "var(--pend)" : "var(--danger)";
           return (
             <button key={t} type="button" className="tab" aria-current={t === tab ? "page" : undefined} onClick={() => setTab(t)}>
               <span style={{ flexGrow: 1, display: "flex", flexDirection: "column", gap: 2 }}>
                 <span style={{ fontSize: 14, fontWeight: 600 }}>{sections[t].label}</span>
                 <span className="small muted">
-                  {e ? `${e} champ${e > 1 ? "s" : ""} à corriger` : !st ? "Connexion non testée" : st.st === "ok" ? "Connexion testée" : st.st === "testing" ? "Test en cours…" : "Échec du test"}
+                  {e ? s.toFix(e) : t === "lang" ? MESSAGES[cfg.ui.language].langName : !st ? s.untested : st.st === "ok" ? s.tested : st.st === "testing" ? s.testing : s.testFailed}
                 </span>
               </span>
               <span className="sdot" style={{ background: color }} />
@@ -276,7 +300,7 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
           );
         })}
         <p className="small muted" style={{ margin: "12px 0 0" }}>
-          Les secrets (mots de passe, clés API) sont stockés côté serveur (fichier secrets.json en 0600, ou variables d’environnement) et ne sont jamais renvoyés au navigateur.
+          {s.secretsNote}
         </p>
       </nav>
 
@@ -294,13 +318,13 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
               <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
                 <button type="button" className="btn outline" onClick={discover} disabled={discState === "loading"}>
                   <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5L14 14" /></svg>
-                  {discState === "loading" ? "Découverte en cours…" : discState === "ok" ? "Relancer la découverte" : "Découvrir les nœuds pxGrid"}
+                  {discState === "loading" ? s.discovering : discState === "ok" ? s.rediscover : s.discover}
                 </button>
                 <span role="status" className="small" style={{ color: discState === "ok" ? "var(--ok-fg)" : discState === "error" ? "var(--bad-fg)" : "var(--text-3)" }}>
-                  {discState === "ok" ? `${nodes.total} nœuds dans le déploiement, dont ${nodes.list.length} avec le service pxGrid activé.`
+                  {discState === "ok" ? s.discovered(nodes.total, nodes.list.length)
                     : discState === "error" ? nodes.msg
-                    : discState === "loading" ? `Interrogation de l’API de déploiement sur ${cfg.ise.pan}…`
-                    : "Interroge l’API de déploiement ISE pour lister les nœuds où le service pxGrid est activé."}
+                    : discState === "loading" ? s.discoveringOn(cfg.ise.pan)
+                    : s.discoverHelp}
                 </span>
               </div>
             )}
@@ -350,24 +374,26 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
         {test && <div role="status" className={`note ${test.st === "ok" ? "ok" : test.st === "error" ? "err" : "info"}`} style={{ fontSize: 13 }}>{test.msg}</div>}
         {showYaml && (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <span className="section-label">config.yaml généré · toutes les sections</span>
-            <pre className="code" style={{ overflowX: "auto" }}>{toYaml(cfg)}</pre>
+            <span className="section-label">{s.yamlTitle}</span>
+            <pre className="code" style={{ overflowX: "auto" }}>{toYaml(cfg, s.yamlSecrets)}</pre>
           </div>
         )}
 
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, paddingTop: 16, borderTop: "1px solid var(--divider)" }}>
-          <button type="button" className="btn outline" onClick={runTest} disabled={test?.st === "testing"}>
-            {test?.st === "testing" ? "Test en cours…" : "Tester la connexion"}
-          </button>
+          {tab !== "lang" && (
+            <button type="button" className="btn outline" onClick={runTest} disabled={test?.st === "testing"}>
+              {test?.st === "testing" ? s.testing : s.test}
+            </button>
+          )}
           <button type="button" className="btn" aria-pressed={showYaml} onClick={() => setShowYaml(!showYaml)}>
-            {showYaml ? "Masquer config.yaml" : "Voir config.yaml"}
+            {showYaml ? s.hideYaml : s.showYaml}
           </button>
           <span style={{ flexGrow: 1 }} />
           <span role="status" className="small" style={{ color: totalErr ? "var(--bad-fg)" : dirty ? "var(--warn-fg)" : "var(--text-3)" }}>
-            {msg || (totalErr ? "Corrigez les champs en erreur pour enregistrer" : dirty ? "Modifications non enregistrées" : "Configuration à jour")}
+            {msg || (totalErr ? s.fixToSave : dirty ? s.unsaved : s.upToDate)}
           </span>
-          {dirty && <button type="button" className="btn link" onClick={() => { setCfg(saved); setTests({}); setMsg(""); }}>Annuler les changements</button>}
-          <button type="button" className="btn ok" disabled={!dirty || totalErr > 0} onClick={save}>Enregistrer</button>
+          {dirty && <button type="button" className="btn link" onClick={() => { setCfg(saved); setTests({}); setMsg(""); }}>{s.discard}</button>}
+          <button type="button" className="btn ok" disabled={!dirty || totalErr > 0} onClick={save}>{s.save}</button>
         </div>
       </div>
     </section>
@@ -380,8 +406,8 @@ const ENV: Record<string, string> = {
   "ise.pxgrid.password": "MA_PXGRID_PASSWORD",
 };
 
-function toYaml(cfg: Config): string {
-  const lines = ["# config.yaml · Matrix Advisor", "# Les secrets sont lus depuis des variables d’environnement ou secrets.json."];
+function toYaml(cfg: Config, secretsComment: string): string {
+  const lines = ["# config.yaml · Matrix Advisor", secretsComment];
   const walk = (obj: Record<string, unknown>, prefix: string, indent: string) => {
     for (const [k, v] of Object.entries(obj)) {
       const path = prefix ? `${prefix}.${k}` : k;
