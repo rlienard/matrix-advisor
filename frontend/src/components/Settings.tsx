@@ -167,13 +167,6 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
                 options: [["fr", MESSAGES.fr.langName], ["en", MESSAGES.en.langName]] },
             ],
           },
-          {
-            title: G.proposals,
-            fields: [
-              { path: "llm.language", label: G.justification, help: G.justificationHelp, kind: "select",
-                options: [["fr", "Français"], ["en", "English"], ["de", "Deutsch"], ["es", "Español"], ["it", "Italiano"], ["nl", "Nederlands"]] },
-            ],
-          },
         ],
       },
       collector: {

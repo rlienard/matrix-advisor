@@ -128,8 +128,3 @@ def message_of(e: BaseException) -> str:
     """The exception's Message when it carries one (kept for later localisation), else ``str(e)``."""
     arg = e.args[0] if e.args else None
     return arg if isinstance(arg, Message) else str(e)
-
-
-def content_lang(language: str) -> Lang:
-    """Language of server-generated proposal text for the configured justification language."""
-    return "fr" if language == "fr" else "en"

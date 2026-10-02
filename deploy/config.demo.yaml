@@ -1,4 +1,7 @@
 # Demo configuration: ISE simulator + IPFIX generator (docker compose --profile demo).
+ui:
+  language: fr
+
 llm:
   provider: ollama
   endpoint: http://ollama:11434
@@ -7,7 +10,6 @@ llm:
   timeout_s: 120
   trigger: event
   learning_days: 0
-  language: fr
 
 ise:
   pan: ise-pan.lab.local

@@ -1,5 +1,6 @@
 """End-to-end workflow against the ISE simulator: flows -> proposals -> decisions -> ISE writes."""
 
+import json
 from datetime import timedelta
 
 import httpx
@@ -209,3 +210,93 @@ def test_ise_error_status_is_localised(client, sim_url):
     cfg["ise"]["openapi"]["password"] = "wrong"
     r = client.post("/api/config/test/ise", json={"config": cfg})
     assert r.json() == {"ok": False, "message": "OpenAPI: ISE refused the authentication (check the ERS user and its role)."}
+
+
+def _mock_llm(c, answer: dict, translation: str = "") -> list:
+    """Make the LLM answer and report online; returns the system prompts it received."""
+    ctx = c.app.state.ctx
+    prompts = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        system = json.loads(request.content)["messages"][0]["content"]
+        prompts.append(system)
+        out = {"justification": translation} if system.startswith("You translate") else answer
+        return httpx.Response(200, json={"message": {"content": json.dumps(out)}})
+
+    ctx.llm.client.http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    ctx.llm.status["online"] = True
+    return prompts
+
+
+def _all(c):
+    return {p["id"]: p for p in c.get("/api/proposals?status=all").json()}
+
+
+def test_llm_back_online_reanalyses_open_proposals(client):
+    """Proposals created while the LLM was down get its opinion once it answers again."""
+    before = _props(client)
+    assert not any(p["llm_used"] for p in before.values())
+    _mock_llm(client, {"risk": "low", "recommendation": "approve", "justification": "Avis du modèle."})
+    assert client.post("/api/agent/run").json()["created"] == 0
+    props = _props(client)
+    assert all(p["llm_used"] and p["justification"] == "Avis du modèle." for p in props.values())
+    assert {k: p["id"] for k, p in props.items()} == {k: p["id"] for k, p in before.items()}
+    # Heuristics stay a floor: the model cannot lower the risk.
+    assert props[("Contractors", "Finance_DB")]["risk"] == "high"
+
+
+def test_language_change_rewrites_proposals_and_translates_decisions(client):
+    props = _props(client)
+    rejected = props[("Contractors", "Web_Servers")]
+    client.post(f"/api/proposals/{rejected['id']}/reject")
+    edited = props[("Contractors", "Finance_DB")]
+    acl = "permit tcp dst eq 1433\ndeny ip"
+    assert client.put(f"/api/proposals/{edited['id']}/edit", json={"acl": acl}).status_code == 200
+    assert "flux observés" in edited["justification"]
+
+    # LLM down: heuristic texts are rewritten in English, decided ones included; nothing else changes.
+    _set_language(client, "en")
+    client.post("/api/agent/run")
+    after = _all(client)
+    assert all("flows observed" in p["justification"] and p["features"]["language"] == "en"
+               for p in after.values()), after
+    assert after[rejected["id"]]["status"] == "rejected"
+    assert after[edited["id"]]["edited_acl"] == acl and after[edited["id"]]["risk"] == "high"
+    assert after[edited["id"]]["features"]["heuristics"][0].startswith("direct database access")
+
+    # LLM up: pending proposals are re-analysed by the model in English.
+    prompts = _mock_llm(client, {"risk": "low", "recommendation": "approve", "justification": "Model's view."})
+    client.post("/api/agent/run")
+    assert prompts and all("in English" in s for s in prompts)
+    after = _all(client)
+    assert all(p["justification"] == "Model's view." for p in after.values() if p["status"] == "pending")
+    reviewed = after[rejected["id"]]  # heuristic text of a decision: not sent to the model
+    assert not reviewed["llm_used"] and "flows observed" in reviewed["justification"]
+
+    # A decision taken on the model's text: only the text is translated, risk and recommendation stay.
+    client.post(f"/api/proposals/{edited['id']}/reject")
+    decided = _all(client)[edited["id"]]
+    assert decided["llm_used"] and (decided["risk"], decided["recommendation"]) == ("high", "reject")
+    client.app.state.ctx.llm.status["online"] = False
+    _set_language(client, "fr")
+    client.post("/api/agent/run")
+    # LLM down: the model's texts wait (never replaced by bare heuristics), heuristic ones are rewritten.
+    after = _all(client)
+    assert after[edited["id"]]["justification"] == "Model's view."
+    assert "flux observés" in after[rejected["id"]]["justification"]
+    prompts = _mock_llm(client, {"risk": "low", "justification": "Avis du modèle."}, translation="Avis traduit.")
+    client.post("/api/agent/run")
+    after = _all(client)
+    assert any(s.startswith("You translate") and "into French" in s for s in prompts)
+    d = after[edited["id"]]
+    assert (d["justification"], d["risk"], d["recommendation"], d["status"]) == ("Avis traduit.", "high", "reject",
+                                                                              "rejected")
+    assert all(p["justification"] == "Avis du modèle." for p in after.values() if p["status"] == "pending")
+
+
+def test_store_does_not_overwrite_a_concurrent_decision(client):
+    store = client.app.state.ctx.store
+    p = _props(client)[("Contractors", "Finance_DB")]
+    client.post(f"/api/proposals/{p['id']}/reject")
+    assert store.save_proposal_if_unchanged({**p, "justification": "late"}, p["updated_at"]) is None
+    assert store.proposal(p["id"])["status"] == "rejected"
