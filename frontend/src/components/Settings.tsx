@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { ApiError, get, post, put } from "../api";
 import { useI18n } from "../i18n";
-import type { Messages } from "../messages";
+import { MESSAGES, type Messages } from "../messages";
 import type { Config } from "../types";
 
-type Tab = "llm" | "ise" | "collector";
+type Tab = "llm" | "ise" | "collector" | "lang";
 type Kind = "text" | "password" | "number" | "select" | "toggle" | "list";
 
 interface Field {
@@ -57,7 +57,7 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
   const [tests, setTests] = useState<Partial<Record<Tab, { st: "testing" | "ok" | "error"; msg: string }>>>({});
   const [msg, setMsg] = useState("");
   const [showYaml, setShowYaml] = useState(false);
-  const { m } = useI18n();
+  const { m, setLang } = useI18n();
   const s = m.settings;
   const [nodes, setNodes] = useState<{ st: "idle" | "loading" | "ok" | "error"; pan: string; list: { fqdn: string; ip: string; roles: string[]; services: string[] }[]; total: number; msg?: string }>({ st: "idle", pan: "", list: [], total: 0 });
 
@@ -81,7 +81,7 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
     if (!cfg) return null;
     const cloud = cfg.llm.provider === "anthropic" || cfg.llm.provider === "azure";
     const { isInt, host, absPath, url } = checks(s);
-    const L = s.llm, I = s.ise, C = s.collector;
+    const L = s.llm, I = s.ise, C = s.collector, G = s.lang;
     return {
       llm: {
         label: L.label, title: L.title, desc: L.desc,
@@ -97,7 +97,6 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
               cfg.llm.provider === "azure" && { path: "llm.api_version", label: L.apiVersion, mono: true },
               { path: "llm.temperature", label: L.temperature, kind: "number", mono: true, check: (v) => (+v >= 0 && +v <= 2 ? "" : L.temperatureCheck), help: L.temperatureHelp },
               { path: "llm.timeout_s", label: L.timeout, kind: "number", mono: true, check: isInt(1, 600) },
-              { path: "llm.language", label: L.language, help: L.languageHelp, kind: "select", options: [["fr", "Français"], ["en", "English"], ["de", "Deutsch"], ["es", "Español"], ["it", "Italiano"], ["nl", "Nederlands"]] },
             ],
           },
           {
@@ -158,6 +157,25 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
           },
         ],
       },
+      lang: {
+        label: G.label, title: G.title, desc: G.desc,
+        sections: [
+          {
+            title: G.interface,
+            fields: [
+              { path: "ui.language", label: G.uiLanguage, help: G.uiLanguageHelp, kind: "select",
+                options: [["fr", MESSAGES.fr.langName], ["en", MESSAGES.en.langName]] },
+            ],
+          },
+          {
+            title: G.proposals,
+            fields: [
+              { path: "llm.language", label: G.justification, help: G.justificationHelp, kind: "select",
+                options: [["fr", "Français"], ["en", "English"], ["de", "Deutsch"], ["es", "Español"], ["it", "Italiano"], ["nl", "Nederlands"]] },
+            ],
+          },
+        ],
+      },
       collector: {
         label: C.label, title: C.title, desc: C.desc,
         sections: [
@@ -206,7 +224,7 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
   };
   const fieldsOf = (t: Tab) => sections[t].sections.flatMap((s) => s.fields.filter(Boolean) as Field[]);
   const errCount = (t: Tab) => fieldsOf(t).filter((f) => errorOf(f)).length;
-  const totalErr = errCount("llm") + errCount("ise") + errCount("collector");
+  const totalErr = errCount("llm") + errCount("ise") + errCount("collector") + errCount("lang");
   const dirty = JSON.stringify(cfg) !== JSON.stringify(saved);
   const test = tests[tab];
 
@@ -247,7 +265,8 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
       const r = await put<Config>("/config", { config: cfg });
       setSaved(r);
       setCfg(r);
-      setMsg(s.saved);
+      setLang(r.ui.language);
+      setMsg(MESSAGES[r.ui.language].settings.saved); // the new language, not the one of this render
       onSaved();
     } catch (e) {
       const detail = e instanceof ApiError && Array.isArray(e.body.detail)
@@ -258,7 +277,7 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
   }
 
   const discState = discovered ? "ok" : nodes.pan === cfg.ise.pan ? nodes.st : "idle";
-  const tabs: Tab[] = ["llm", "ise", "collector"];
+  const tabs: Tab[] = ["llm", "ise", "collector", "lang"];
 
   return (
     <section className="card settings" aria-label={s.aria}>
@@ -267,13 +286,13 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
         {tabs.map((t) => {
           const st = tests[t];
           const e = errCount(t);
-          const color = e ? "var(--danger)" : !st ? "#596069" : st.st === "ok" ? "var(--ok)" : st.st === "testing" ? "var(--pend)" : "var(--danger)";
+          const color = e ? "var(--danger)" : t === "lang" || !st ? "#596069" : st.st === "ok" ? "var(--ok)" : st.st === "testing" ? "var(--pend)" : "var(--danger)";
           return (
             <button key={t} type="button" className="tab" aria-current={t === tab ? "page" : undefined} onClick={() => setTab(t)}>
               <span style={{ flexGrow: 1, display: "flex", flexDirection: "column", gap: 2 }}>
                 <span style={{ fontSize: 14, fontWeight: 600 }}>{sections[t].label}</span>
                 <span className="small muted">
-                  {e ? s.toFix(e) : !st ? s.untested : st.st === "ok" ? s.tested : st.st === "testing" ? s.testing : s.testFailed}
+                  {e ? s.toFix(e) : t === "lang" ? MESSAGES[cfg.ui.language].langName : !st ? s.untested : st.st === "ok" ? s.tested : st.st === "testing" ? s.testing : s.testFailed}
                 </span>
               </span>
               <span className="sdot" style={{ background: color }} />
@@ -361,9 +380,11 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
         )}
 
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, paddingTop: 16, borderTop: "1px solid var(--divider)" }}>
-          <button type="button" className="btn outline" onClick={runTest} disabled={test?.st === "testing"}>
-            {test?.st === "testing" ? s.testing : s.test}
-          </button>
+          {tab !== "lang" && (
+            <button type="button" className="btn outline" onClick={runTest} disabled={test?.st === "testing"}>
+              {test?.st === "testing" ? s.testing : s.test}
+            </button>
+          )}
           <button type="button" className="btn" aria-pressed={showYaml} onClick={() => setShowYaml(!showYaml)}>
             {showYaml ? s.hideYaml : s.showYaml}
           </button>

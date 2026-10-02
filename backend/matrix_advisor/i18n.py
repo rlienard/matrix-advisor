@@ -1,9 +1,9 @@
 """User-facing messages in French and English.
 
-The UI sends its language in ``Accept-Language``; API error messages and connection-test results
-are rendered in that language (French when absent or unsupported). Errors raised deep in the code
-carry a :class:`Message`, a ``str`` holding the French text (so logs and ``str(e)`` keep working)
-plus the key and parameters needed to render it again in another language at the API boundary.
+API error messages and connection-test results are rendered in the global ``ui.language`` setting
+(French by default). Errors raised deep in the code carry a :class:`Message`, a ``str`` holding the
+French text (so logs and ``str(e)`` keep working) plus the key and parameters needed to render it
+again in another language at the API boundary.
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ from __future__ import annotations
 from typing import Literal, Self
 
 Lang = Literal["fr", "en"]
-LANGS: tuple[Lang, ...] = ("fr", "en")
 DEFAULT: Lang = "fr"
 
 CATALOG: dict[str, dict[Lang, str]] = {
@@ -129,21 +128,6 @@ def message_of(e: BaseException) -> str:
     """The exception's Message when it carries one (kept for later localisation), else ``str(e)``."""
     arg = e.args[0] if e.args else None
     return arg if isinstance(arg, Message) else str(e)
-
-
-def parse_accept_language(header: str | None) -> Lang:
-    """First supported language of an Accept-Language header, by preference weight."""
-    prefs: list[tuple[float, int, str]] = []
-    for i, part in enumerate((header or "").split(",")):
-        tag, _, q = part.strip().partition(";q=")
-        try:
-            weight = float(q) if q else 1.0
-        except ValueError:
-            weight = 0.0
-        primary = tag.strip().split("-")[0].lower()
-        if primary in LANGS and weight > 0:
-            prefs.append((-weight, i, primary))
-    return min(prefs)[2] if prefs else DEFAULT  # type: ignore[return-value]
 
 
 def content_lang(language: str) -> Lang:

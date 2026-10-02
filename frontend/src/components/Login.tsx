@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ApiError, post } from "../api";
-import { LangSwitch, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 
 export default function Login({ onLogin }: { onLogin: () => void }) {
   const [password, setPassword] = useState("");
@@ -24,12 +24,9 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
 
   return (
     <form className="card login" onSubmit={submit}>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-        <div className="brand">
-          <h1>Matrix Advisor</h1>
-          <p>SD-Access · Default-Deny</p>
-        </div>
-        <LangSwitch />
+      <div className="brand">
+        <h1>Matrix Advisor</h1>
+        <p>SD-Access · Default-Deny</p>
       </div>
       <div className="field">
         <label className="field-label" htmlFor="pw">{m.login.password}</label>

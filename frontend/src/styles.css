@@ -171,6 +171,3 @@ legend { padding: 0; margin-bottom: 8px; font-size: 13px; font-weight: 600; colo
   .shell { padding: 16px; }
   .settings nav { border-right: 0; border-bottom: 1px solid var(--divider); }
 }
-
-/* FR / EN switch in the header and on the login card */
-.lang-switch button { min-width: 40px; min-height: 30px; padding: 0 8px; font-size: 12px; }

@@ -1,23 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { setApiLanguage } from "./api";
-import { LANGS, MESSAGES, type Lang, type Messages } from "./messages";
-
-const STORAGE_KEY = "matrix-advisor.lang";
-
-function initialLang(): Lang {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved === "fr" || saved === "en") return saved;
-  } catch {
-    // storage unavailable (private mode): fall back to the browser language
-  }
-  const prefs = navigator.languages?.length ? navigator.languages : [navigator.language];
-  for (const tag of prefs) {
-    const primary = (tag || "").split("-")[0].toLowerCase();
-    if ((LANGS as string[]).includes(primary)) return primary as Lang;
-  }
-  return "en";
-}
+import { MESSAGES, type Lang, type Messages } from "./messages";
 
 const toDate = (iso: string) => new Date(iso + (iso.endsWith("Z") ? "" : "Z"));
 
@@ -54,17 +37,11 @@ function build(lang: Lang, setLang: (lang: Lang) => void): I18n {
 const I18nContext = createContext<I18n>(build("fr", () => {}));
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [lang, setLangState] = useState<Lang>(initialLang);
+  // Global setting (Configuration > Language), read from /auth/me by App and updated on save.
+  const [lang, setLangState] = useState<Lang>("fr");
   setApiLanguage(lang);
 
-  const setLang = useCallback((next: Lang) => {
-    try {
-      localStorage.setItem(STORAGE_KEY, next);
-    } catch {
-      // not persisted: the choice still applies to this page
-    }
-    setLangState(next);
-  }, []);
+  const setLang = useCallback((next: Lang) => setLangState(next === "en" ? "en" : "fr"), []);
 
   useEffect(() => {
     document.documentElement.lang = lang;
@@ -75,16 +52,3 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 }
 
 export const useI18n = () => useContext(I18nContext);
-
-export function LangSwitch() {
-  const { lang, setLang, m } = useI18n();
-  return (
-    <div className="segmented lang-switch" role="group" aria-label={m.langSwitch}>
-      {LANGS.map((l) => (
-        <button key={l} type="button" lang={l} aria-pressed={lang === l} title={MESSAGES[l].langName} onClick={() => setLang(l)}>
-          {l.toUpperCase()}
-        </button>
-      ))}
-    </div>
-  );
-}

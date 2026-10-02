@@ -62,7 +62,8 @@ def logout(response: Response):
 
 @router.get("/auth/me")
 def me(request: Request):
-    return {"user": auth.current_user(request)}
+    # The language is public: the login page needs it before authentication.
+    return {"user": auth.current_user(request), "language": auth.lang(request)}
 
 
 def _localized(value, lang: str):

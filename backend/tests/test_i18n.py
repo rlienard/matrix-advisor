@@ -1,16 +1,6 @@
 from matrix_advisor.agent import risk
 from matrix_advisor.agent.llm import PrivacyViolation, assert_no_ip
-from matrix_advisor.i18n import CATALOG, Message, content_lang, localize, message_of, parse_accept_language
-
-
-def test_accept_language():
-    assert parse_accept_language(None) == "fr"
-    assert parse_accept_language("") == "fr"
-    assert parse_accept_language("en-US,en;q=0.9") == "en"
-    assert parse_accept_language("de-DE,en;q=0.8,fr;q=0.9") == "fr"
-    assert parse_accept_language("de, it") == "fr"
-    assert parse_accept_language("fr;q=0, en") == "en"
-    assert parse_accept_language("en;q=abc, fr") == "fr"
+from matrix_advisor.i18n import CATALOG, Message, content_lang, localize, message_of
 
 
 def test_catalog_is_complete():

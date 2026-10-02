@@ -2,6 +2,9 @@
 # Secrets are never stored here: ${VAR} placeholders are read from the environment, or from
 # /data/secrets.json (0600) when entered in the web UI.
 
+ui:
+  language: fr                  # fr | en: web UI and API messages, for every user
+
 llm:
   provider: ollama              # ollama | openai (vLLM, LM Studio…) | anthropic | azure
   endpoint: http://ollama:11434

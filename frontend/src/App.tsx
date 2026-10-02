@@ -5,18 +5,24 @@ import Header from "./components/Header";
 import Login from "./components/Login";
 import Settings from "./components/Settings";
 import { useI18n } from "./i18n";
+import type { Lang } from "./messages";
 import type { Status } from "./types";
 
 export default function App() {
   const [user, setUser] = useState<string | null | undefined>(undefined);
   const [view, setView] = useState<"dash" | "settings">("dash");
   const [status, setStatus] = useState<Status | null>(null);
-  const { lang } = useI18n();
+  const { lang, setLang } = useI18n();
 
   useEffect(() => {
     setUnauthorizedHandler(() => setUser(null));
-    get<{ user: string | null }>("/auth/me").then((r) => setUser(r.user)).catch(() => setUser(null));
-  }, []);
+    get<{ user: string | null; language: Lang }>("/auth/me")
+      .then((r) => {
+        setLang(r.language);
+        setUser(r.user);
+      })
+      .catch(() => setUser(null));
+  }, [setLang]);
 
   const refreshStatus = useCallback(() => {
     get<Status>("/status").then(setStatus).catch(() => undefined);

@@ -19,7 +19,7 @@ Details: `docs/architecture.md`. Session context and design history: README and 
 ```
 backend/matrix_advisor/
   config.py            YAML config + secrets (env vars > secrets.json 0600); never write secrets to YAML
-  i18n.py              FR/EN API messages (Message keys, Accept-Language)
+  i18n.py              FR/EN API messages (Message keys, rendered in ui.language)
   store.py             DuckDB schema and queries (flow_minutes 7 days, pair_daily, proposals, audit)
   ingest/              goflow.py (tail NDJSON, orient), resolver.py (IP→SGT), pipeline.py (loop)
   ise/                 client.py (ERS + OpenAPI), pxgrid.py (pxGrid 2.0 + STOMP), service.py (cache, reconcile)
@@ -87,8 +87,9 @@ MA_CONFIG_TEMPLATE=/app/deploy/config.demo.yaml docker compose --profile demo --
 - Code, comments, README, commit messages: **English**. UI strings and user-facing API messages exist in
   **French and English**. French is the default and the reference wording (e.g. « Hors ligne » without hyphen,
   « En ligne », « Cisco ISE : En ligne (synchro …) »). UI text lives in `frontend/src/messages.ts` (`en` is
-  type-checked against `fr`); API messages in `backend/matrix_advisor/i18n.py` (`Message(key, …)`, rendered in the
-  request's `Accept-Language`, which the UI sets from its FR/EN switch). Heuristic risk reasons and the fallback
+  type-checked against `fr`); API messages in `backend/matrix_advisor/i18n.py` (`Message(key, …)`). The language
+  is one global setting, `ui.language` (Configuration > Language tab), returned by `/api/auth/me` for the UI and
+  used to render API messages; there is no per-browser switch. Heuristic risk reasons and the fallback
   justification follow `llm.language` (French for `fr`, English otherwise) because they are stored with the proposal.
 - Keep `frontend/src/acl.ts` and `backend/matrix_advisor/policy/acl.py` behaviourally identical, messages included
   in both languages; a change to either needs a case in `backend/tests/fixtures/acl_parity.json` (optional `"lang"`),

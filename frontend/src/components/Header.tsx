@@ -1,5 +1,5 @@
 import type { Status } from "../types";
-import { LangSwitch, useI18n } from "../i18n";
+import { useI18n } from "../i18n";
 
 interface Props {
   status: Status | null;
@@ -54,10 +54,7 @@ export default function Header({ status, view, onToggleView, onResync, onLogout 
           </svg>
           {view === "settings" ? h.backToDashboard : h.settings}
         </button>
-        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <LangSwitch />
-          <button type="button" className="btn link" onClick={onLogout}>{h.logout}</button>
-        </span>
+        <button type="button" className="btn link" onClick={onLogout}>{h.logout}</button>
       </div>
     </header>
   );

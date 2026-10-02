@@ -1,6 +1,6 @@
 import { MESSAGES, type Lang } from "./messages";
 
-// Language of the UI, sent with every request so that API error messages come back in it.
+// Language of the UI, for the fallback error text (API messages come back in the global language).
 let language: Lang = "fr";
 export function setApiLanguage(lang: Lang) {
   language = lang;
@@ -28,7 +28,6 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
     credentials: "same-origin",
     ...rest,
     headers: {
-      "Accept-Language": language,
       ...(json !== undefined ? { "Content-Type": "application/json" } : {}),
       ...(rest.headers ?? {}),
     },

@@ -7,7 +7,7 @@ import hmac
 from fastapi import HTTPException, Request, Response
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
-from ..i18n import Message, localize, parse_accept_language
+from ..i18n import Message, localize
 
 COOKIE = "ma_session"
 
@@ -48,8 +48,8 @@ def current_user(request: Request) -> str | None:
 
 
 def lang(request: Request) -> str:
-    """Language of the user-facing messages of this request (the UI sends its own in Accept-Language)."""
-    return parse_accept_language(request.headers.get("accept-language"))
+    """Language of user-facing messages: the global setting ``ui.language``."""
+    return request.app.state.ctx.config.settings.ui.language
 
 
 def require_user(request: Request) -> str:

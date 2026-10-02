@@ -125,7 +125,13 @@ class ServerConfig(BaseModel):
     cors_origins: list[str] = []
 
 
+class UIConfig(BaseModel):
+    # Language of the web UI and of API messages, for every user (set in Configuration > Language).
+    language: Literal["fr", "en"] = "fr"
+
+
 class Settings(BaseModel):
+    ui: UIConfig = UIConfig()
     llm: LLMConfig = LLMConfig()
     ise: ISEConfig = ISEConfig()
     collector: CollectorConfig = CollectorConfig()
