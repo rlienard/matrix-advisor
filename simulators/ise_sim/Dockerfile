@@ -1,5 +1,5 @@
 FROM python:3.12-slim
-RUN pip install --no-cache-dir "fastapi>=0.115" "uvicorn>=0.30"
+RUN pip install --no-cache-dir "fastapi>=0.115" "uvicorn[standard]>=0.30"
 WORKDIR /sim
 COPY ise_sim.py .
 EXPOSE 9060

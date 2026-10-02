@@ -4,8 +4,12 @@ Implements the subset of Cisco ISE used by Matrix Advisor:
   * ERS: /ers/config/sgt, /ers/config/sgacl, /ers/config/egressmatrixcell (list, get, create, update)
   * OpenAPI: /api/v1/deployment/node
   * pxGrid 2.0 control (AccountActivate, ServiceLookup, AccessSecret) and REST
-    (session/getSessions, sxp/getBindings). No websocket: clients fall back to polling.
-Plus demo helpers under /sim: inject an administrator change (conflict), reset, dump state.
+    (session/getSessions, sxp/getBindings)
+  * pxGrid pubsub: STOMP over websocket at /pxgrid/ise/pubsub. SGT changes are published on
+    securityGroupTopic; SGACL and egress cell changes on securityGroupAclTopic (a simplification:
+    real ISE has no dedicated matrix topic); /sim/session publishes on sessionTopic.
+Plus demo helpers under /sim: inject an administrator change (conflict), push a session event,
+reset, dump state.
 
 It is NOT a faithful ISE: just enough behaviour to exercise the workflow without a lab.
 """
@@ -15,10 +19,11 @@ from __future__ import annotations
 import base64
 import copy
 import itertools
+import json
 import os
 import uuid
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 USER = os.environ.get("SIM_USER", "matrix-advisor")
@@ -48,6 +53,12 @@ SERVER_NETS = {"Web_Servers": "10.20.1.0/24", "HR_Servers": "10.20.2.0/24", "Pri
                "Finance_DB": "10.20.4.0/24", "Video_NVR": "10.20.5.0/24"}
 
 WRAP = {"sgt": "Sgt", "sgacl": "Sgacl", "egressmatrixcell": "EgressMatrixCell"}
+
+PX_SECRET = "sim-secret"
+SESSION_TOPIC = "/topic/com.cisco.ise.session"
+SG_TOPIC = "/topic/com.cisco.ise.config.trustsec.security.group"
+SGACL_TOPIC = "/topic/com.cisco.ise.config.trustsec.security.group.acl"
+TOPIC_OF = {"sgt": SG_TOPIC, "sgacl": SGACL_TOPIC, "egressmatrixcell": SGACL_TOPIC}
 
 
 def _id() -> str:
@@ -147,6 +158,7 @@ async def ers_create(res: str, request: Request, response: Response):
     if res == "sgacl":
         item.setdefault("readOnly", False)
     STATE[res][oid] = item
+    await _publish(TOPIC_OF.get(res), {"operation": "CREATE", res: item})
     response.headers["Location"] = f"{request.base_url}ers/config/{res}/{oid}"
     return Response(status_code=201, headers={"Location": response.headers["Location"]})
 
@@ -164,6 +176,7 @@ async def ers_update(res: str, oid: str, request: Request):
     _validate(res, merged, oid)
     merged["generationId"] = str(int(current.get("generationId", "0")) + 1)
     STATE[res][oid] = merged
+    await _publish(TOPIC_OF.get(res), {"operation": "UPDATE", res: merged})
     return {"UpdatedFieldsList": {"updatedField": [{"field": k} for k in body]}}
 
 
@@ -209,10 +222,11 @@ async def px_lookup(request: Request):
     base = str(request.base_url).rstrip("/")
     services = {
         "com.cisco.ise.session": {"restBaseUrl": f"{base}/pxgrid/rest/session",
-                                  "sessionTopic": "/topic/com.cisco.ise.session"},
+                                  "sessionTopic": SESSION_TOPIC},
         "com.cisco.ise.sxp": {"restBaseUrl": f"{base}/pxgrid/rest/sxp", "bindingTopic": "/topic/com.cisco.ise.sxp.binding"},
         "com.cisco.ise.config.trustsec": {"restBaseUrl": f"{base}/pxgrid/rest/trustsec",
-                                          "securityGroupTopic": "/topic/com.cisco.ise.config.trustsec.security.group"},
+                                          "securityGroupTopic": SG_TOPIC, "securityGroupAclTopic": SGACL_TOPIC},
+        "com.cisco.ise.pubsub": {"wsUrl": base.replace("http", "ws", 1) + "/pxgrid/ise/pubsub"},
     }
     if name not in services:
         return {"services": []}
@@ -222,7 +236,7 @@ async def px_lookup(request: Request):
 @app.post("/pxgrid/control/AccessSecret")
 def px_secret(request: Request):
     _px_user(request)
-    return {"secret": "sim-secret"}
+    return {"secret": PX_SECRET}
 
 
 @app.post("/pxgrid/rest/session/getSessions")
@@ -243,6 +257,73 @@ def px_bindings(request: Request):
     return {"bindings": [{"ipPrefix": net, "tag": values[sgt], "source": "static"} for sgt, net in SERVER_NETS.items()]}
 
 
+# ------------------------------------------------------------------ pxGrid pubsub (STOMP over websocket)
+SUBSCRIBERS: list[tuple[WebSocket, str, str]] = []  # (websocket, destination, subscription id)
+_message_ids = itertools.count(1)
+
+
+def stomp_frame(command: str, headers: dict[str, str], body: str = "") -> str:
+    return command + "\n" + "".join(f"{k}:{v}\n" for k, v in headers.items()) + "\n" + body + "\0"
+
+
+def parse_stomp(raw: str) -> tuple[str, dict[str, str]]:
+    head = raw.rstrip("\0").partition("\n\n")[0].split("\n")
+    return head[0].strip(), dict(line.split(":", 1) for line in head[1:] if ":" in line)
+
+
+async def _publish(topic: str | None, body: dict) -> None:
+    if not topic:
+        return
+    payload = json.dumps(body)
+    gone = []
+    for ws, dest, sub_id in SUBSCRIBERS:
+        if dest != topic:
+            continue
+        frame = stomp_frame("MESSAGE", {"destination": topic, "subscription": sub_id,
+                                        "message-id": str(next(_message_ids)), "content-type": "application/json"},
+                            payload)
+        try:
+            await ws.send_bytes(frame.encode())
+        except Exception:  # noqa: BLE001 - subscriber gone
+            gone.append(ws)
+    for ws in gone:
+        _drop(ws)
+
+
+def _drop(ws: WebSocket) -> None:
+    SUBSCRIBERS[:] = [s for s in SUBSCRIBERS if s[0] is not ws]
+
+
+@app.websocket("/pxgrid/ise/pubsub")
+async def px_pubsub(ws: WebSocket):
+    header = ws.headers.get("authorization", "")
+    user, _, secret = base64.b64decode(header[6:]).decode(errors="replace").partition(":") \
+        if header.lower().startswith("basic ") else ("", "", "")
+    if not user or secret != PX_SECRET:
+        await ws.close(code=1008)
+        return
+    await ws.accept()
+    try:
+        while True:
+            msg = await ws.receive()
+            if msg["type"] == "websocket.disconnect":
+                break
+            raw = msg.get("text") or (msg.get("bytes") or b"").decode(errors="replace")
+            command, headers = parse_stomp(raw)
+            if command in ("CONNECT", "STOMP"):
+                await ws.send_bytes(stomp_frame("CONNECTED", {"version": "1.2"}).encode())
+            elif command == "SUBSCRIBE":
+                SUBSCRIBERS.append((ws, headers.get("destination", ""), headers.get("id", "")))
+            elif command == "UNSUBSCRIBE":
+                SUBSCRIBERS[:] = [s for s in SUBSCRIBERS if not (s[0] is ws and s[2] == headers.get("id"))]
+            elif command == "DISCONNECT":
+                break
+    except WebSocketDisconnect:
+        pass
+    finally:
+        _drop(ws)
+
+
 # ------------------------------------------------------------------ demo helpers
 class Conflict(BaseModel):
     src: str
@@ -252,7 +333,7 @@ class Conflict(BaseModel):
 
 
 @app.post("/sim/conflict")
-def sim_conflict(c: Conflict):
+async def sim_conflict(c: Conflict):
     """Simulate an administrator assigning a contract to a cell behind the advisor's back."""
     sid = _by_name(STATE, "sgacl", c.sgacl)
     if not sid:
@@ -272,7 +353,22 @@ def sim_conflict(c: Conflict):
         STATE["egressmatrixcell"][cid] = {"id": cid, "name": f"{c.src}-{c.dst}", "description": "manual",
                                           "sourceSgtId": src, "destinationSgtId": dst, "matrixCellStatus": "ENABLED",
                                           "defaultRule": "NONE", "sgacls": [sid]}
+    await _publish(SGACL_TOPIC, {"operation": "UPDATE", "sgacl": STATE["sgacl"][sid]})
     return {"ok": True}
+
+
+class SessionEvent(BaseModel):
+    ip: str
+    sgt: str
+    state: str = "STARTED"  # or DISCONNECTED
+
+
+@app.post("/sim/session")
+async def sim_session(e: SessionEvent):
+    """Publish a session change (endpoint connected or disconnected) on the pxGrid session topic."""
+    session = {"ipAddresses": [e.ip], "ctsSecurityGroup": e.sgt, "state": e.state, "userName": f"sim-{e.ip}"}
+    await _publish(SESSION_TOPIC, {"sessions": [session]})
+    return {"ok": True, "subscribers": sum(1 for s in SUBSCRIBERS if s[1] == SESSION_TOPIC)}
 
 
 @app.post("/sim/reset")

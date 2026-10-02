@@ -27,10 +27,11 @@ backend/matrix_advisor/
                        actions.py (approve/reject/edit and ISE writes)
   api/                 routes.py (REST), auth.py (single admin, signed cookie)
   main.py              wiring, background workers, static UI
-backend/tests/         pytest; test_workflow.py runs the full flow against the ISE simulator
+backend/tests/         pytest; test_workflow.py runs the full flow against the ISE simulator, test_pxgrid_ws.py the
+                       STOMP subscription; fixtures/acl_parity.json is shared with frontend/tests
 frontend/src/          React + TS: components/{Dashboard,Sankey,Trend,PairPanel,Settings,Header,Login}.tsx,
                        acl.ts mirrors policy/acl.py for live feedback
-simulators/ise_sim/    fake ISE (ERS, deployment nodes, pxGrid REST, /sim/conflict|reset|state)
+simulators/ise_sim/    fake ISE (ERS, deployment nodes, pxGrid REST + STOMP pubsub, /sim/conflict|session|reset|state)
 simulators/flowgen/    IPFIX generator with the demo scenarios (no dependencies)
 deploy/                config templates (example, demo, lima), lima/lima-demo.sh
 ```
@@ -98,7 +99,8 @@ MA_CONFIG_TEMPLATE=/app/deploy/config.demo.yaml docker compose --profile demo --
 
 - ERS paths and JSON wrappers (`Sgt`, `Sgacl`, `EgressMatrixCell`), `/api/v1/deployment/node`, pxGrid control
   and REST calls were written from knowledge of ISE 3.x, not checked against official docs: validate in a lab.
-- pxGrid websocket (STOMP) subscription is untested (the simulator has no websocket; polling fallback is tested).
+- pxGrid websocket (STOMP) subscription is tested only against the simulator, whose topics and message bodies are
+  approximations (SGACL and egress cell changes share `securityGroupAclTopic`): check frames on a real ISE.
 - ISE staging matrix / workflow mode is not driven by the API (`write_mode: monitor` is the substitute);
   policy push to devices is left to the ISE admin.
 - GoFlow2 has no Parquet output (JSON/protobuf only); the backend writes Parquet itself.

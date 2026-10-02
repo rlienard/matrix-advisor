@@ -1,48 +1,14 @@
 """End-to-end workflow against the ISE simulator: flows -> proposals -> decisions -> ISE writes."""
 
-import socket
-import sys
-import threading
-import time
 from datetime import timedelta
-from pathlib import Path
 
 import httpx
 import pytest
-import uvicorn
 import yaml
 from fastapi.testclient import TestClient
 
 from matrix_advisor.main import build_context, create_app
 from matrix_advisor.store import utcnow
-
-SIM_DIR = Path(__file__).resolve().parents[2] / "simulators" / "ise_sim"
-
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-@pytest.fixture(scope="module")
-def sim_url():
-    sys.path.insert(0, str(SIM_DIR))
-    import ise_sim
-
-    port = _free_port()
-    server = uvicorn.Server(uvicorn.Config(ise_sim.app, host="127.0.0.1", port=port, log_level="warning"))
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    url = f"http://127.0.0.1:{port}"
-    for _ in range(50):
-        try:
-            httpx.get(url + "/sim/state")
-            break
-        except httpx.HTTPError:
-            time.sleep(0.1)
-    yield url
-    server.should_exit = True
 
 
 @pytest.fixture()
