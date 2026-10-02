@@ -8,7 +8,7 @@ plus the key and parameters needed to render it again in another language at the
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Self
 
 Lang = Literal["fr", "en"]
 LANGS: tuple[Lang, ...] = ("fr", "en")
@@ -106,7 +106,7 @@ class Message(str):
     key: str
     params: dict
 
-    def __new__(cls, key: str, **params) -> Message:
+    def __new__(cls, key: str, **params) -> Self:
         obj = super().__new__(cls, _render(key, DEFAULT, params))
         obj.key, obj.params = key, params
         return obj
