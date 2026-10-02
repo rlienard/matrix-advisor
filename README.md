@@ -95,6 +95,10 @@ cameras and guests. Within a minute you get proposals for the scenarios used in 
   approve `IT_Admins → Finance_DB`:
   `curl -X POST localhost:9060/sim/conflict -H 'content-type: application/json' -d '{"src":"IT_Admins","dst":"Finance_DB"}'`
 
+**On a Mac with Lima** (no Docker Desktop needed): `brew install lima ollama`, then
+`./deploy/lima/lima-demo.sh`. The script creates a VM with Docker, starts the demo inside it and
+uses Ollama running natively on the Mac (Metal GPU) through `host.lima.internal`.
+
 Without a GPU, the demo still works: if the LLM does not answer in time, proposals carry the
 heuristic analysis (badge “Heuristique”).
 

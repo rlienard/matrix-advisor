@@ -1,0 +1,6 @@
+# Lima override: lets the backend reach Ollama running natively on the Mac.
+# In Lima's default user-mode network, 192.168.5.2 is the host.
+services:
+  matrix-advisor:
+    extra_hosts:
+      - "host.lima.internal:192.168.5.2"

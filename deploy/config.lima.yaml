@@ -1,0 +1,36 @@
+# Demo configuration for a Lima VM on macOS: ISE simulator + IPFIX generator, Ollama on the Mac.
+llm:
+  provider: ollama
+  endpoint: http://host.lima.internal:11434
+  model: qwen2.5:7b
+  temperature: 0.1
+  timeout_s: 120
+  trigger: event
+  learning_days: 0
+  language: fr
+
+ise:
+  pan: ise-pan.lab.local
+  openapi:
+    base_url: http://ise-sim:9060
+    username: matrix-advisor
+    password: demo-password
+  pxgrid:
+    node: ise-px1.lab.local
+    base_url: http://ise-sim:9060
+    client_name: matrix-advisor
+    auth: password
+    password: sim
+    subscribe: false
+    poll_seconds: 30
+  write_mode: monitor
+  sgacl_prefix: MA_
+  reconcile_minutes: 5
+
+collector:
+  input_file: /flows/goflow2.ndjson
+  allowed_exporters: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
+  parquet_dir: /data/parquet
+  duckdb_path: /data/matrix-advisor.duckdb
+  rotate_minutes: 15
+  aggregation_seconds: 20
