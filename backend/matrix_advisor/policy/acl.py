@@ -82,7 +82,37 @@ def make_spec(proto: str, port: int | None) -> str:
     return proto
 
 
-def parse(text: str) -> ParseResult:
+# Same wording as frontend/src/acl.ts (checked by tests/fixtures/acl_parity.json).
+MESSAGES = {
+    "fr": {
+        "not_ace": "Ligne {i} : « {line} » n’est pas une ACE reconnue.",
+        "port_range": "Ligne {i} : port hors plage.",
+        "port_proto": "Ligne {i} : un port n’a de sens qu’avec tcp ou udp.",
+        "empty": "Le contrat est vide.",
+        "permit_any": "« permit ip » ouvre tout le trafic entre ces deux groupes : contraire au deny par défaut.",
+        "blocked": "{spec} est observé mais n’est plus autorisé : ce trafic sera bloqué.",
+        "unobserved": "{spec} autorisé mais jamais observé sur cette paire.",
+        "no_final_deny": "Pas de « deny ip » final : c’est la politique par défaut de la cellule ou de la matrice "
+                         "qui s’applique.",
+    },
+    "en": {
+        "not_ace": "Line {i}: “{line}” is not a recognised ACE.",
+        "port_range": "Line {i}: port out of range.",
+        "port_proto": "Line {i}: a port only makes sense with tcp or udp.",
+        "empty": "The contract is empty.",
+        "permit_any": "“permit ip” opens all traffic between these two groups: contrary to default deny.",
+        "blocked": "{spec} is observed but no longer permitted: this traffic will be blocked.",
+        "unobserved": "{spec} permitted but never observed on this pair.",
+        "no_final_deny": "No final “deny ip”: the default policy of the cell or the matrix applies.",
+    },
+}
+
+
+def _msg(lang: str, key: str, **params) -> str:
+    return MESSAGES.get(lang, MESSAGES["fr"])[key].format(**params)
+
+
+def parse(text: str, lang: str = "fr") -> ParseResult:
     rules: list[ACE] = []
     errors: list[str] = []
     for i, raw in enumerate(text.splitlines(), start=1):
@@ -91,20 +121,20 @@ def parse(text: str) -> ParseResult:
             continue
         m = _ACE_RE.match(line)
         if not m:
-            errors.append(f"Ligne {i} : « {line} » n’est pas une ACE reconnue.")
+            errors.append(_msg(lang, "not_ace", i=i, line=line))
             continue
         action, proto = m.group(1).lower(), m.group(2).lower()
         lo = int(m.group(3)) if m.group(3) else (int(m.group(4)) if m.group(4) else None)
         hi = int(m.group(3)) if m.group(3) else (int(m.group(5)) if m.group(5) else None)
         if lo is not None and (lo < 1 or hi > 65535 or hi < lo):
-            errors.append(f"Ligne {i} : port hors plage.")
+            errors.append(_msg(lang, "port_range", i=i))
             continue
         if lo is not None and proto not in ("tcp", "udp"):
-            errors.append(f"Ligne {i} : un port n’a de sens qu’avec tcp ou udp.")
+            errors.append(_msg(lang, "port_proto", i=i))
             continue
         rules.append(ACE(action, proto, lo, hi, bool(m.group(6))))
     if not rules and not errors:
-        errors.append("Le contrat est vide.")
+        errors.append(_msg(lang, "empty"))
     return ParseResult(rules, errors)
 
 
@@ -177,22 +207,22 @@ def has_permit_any(rules: list[ACE]) -> bool:
     return any(r.action == "permit" and r.proto == "ip" for r in rules)
 
 
-def validate(text: str, observed: list[str]) -> dict:
+def validate(text: str, observed: list[str], lang: str = "fr") -> dict:
     """Same checks as the UI: syntax, observed traffic still allowed, unused permits."""
-    res = parse(text)
+    res = parse(text, lang)
     warns: list[str] = []
     infos: list[str] = []
     if has_permit_any(res.rules):
-        warns.append("« permit ip » ouvre tout le trafic entre ces deux groupes : contraire au deny par défaut.")
+        warns.append(_msg(lang, "permit_any"))
     if not res.errors:
         for spec in observed:
             if not allows(res.rules, spec):
-                warns.append(f"{spec} est observé mais n’est plus autorisé : ce trafic sera bloqué.")
+                warns.append(_msg(lang, "blocked", spec=spec))
         for r in res.rules:
             if r.action == "permit" and r.spec and not any(_overlap(r, s) for s in observed):
-                infos.append(f"{r.spec} autorisé mais jamais observé sur cette paire.")
+                infos.append(_msg(lang, "unobserved", spec=r.spec))
         if res.rules and not (res.rules[-1].action == "deny" and res.rules[-1].proto == "ip"):
-            infos.append("Pas de « deny ip » final : c’est la politique par défaut de la cellule ou de la matrice qui s’applique.")
+            infos.append(_msg(lang, "no_final_deny"))
     return {"errors": res.errors, "warns": warns, "infos": infos}
 
 

@@ -1,9 +1,17 @@
+import { MESSAGES, type Lang } from "./messages";
+
+// Language of the UI, sent with every request so that API error messages come back in it.
+let language: Lang = "fr";
+export function setApiLanguage(lang: Lang) {
+  language = lang;
+}
+
 export class ApiError extends Error {
   status: number;
   body: Record<string, unknown>;
   constructor(status: number, body: Record<string, unknown>) {
     const detail = body?.detail;
-    super(typeof detail === "string" ? detail : `Erreur HTTP ${status}`);
+    super(typeof detail === "string" ? detail : MESSAGES[language].httpError(status));
     this.status = status;
     this.body = body;
   }
@@ -19,7 +27,11 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
   const res = await fetch(`/api${path}`, {
     credentials: "same-origin",
     ...rest,
-    headers: { ...(json !== undefined ? { "Content-Type": "application/json" } : {}), ...(rest.headers ?? {}) },
+    headers: {
+      "Accept-Language": language,
+      ...(json !== undefined ? { "Content-Type": "application/json" } : {}),
+      ...(rest.headers ?? {}),
+    },
     body: json !== undefined ? JSON.stringify(json) : rest.body,
   });
   const text = await res.text();

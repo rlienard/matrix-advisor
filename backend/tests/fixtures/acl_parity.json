@@ -1,5 +1,5 @@
 {
- "_comment": "Shared cases for frontend/src/acl.ts and backend/matrix_advisor/policy/acl.py. Both test suites assert these exact results.",
+ "_comment": "Shared cases for frontend/src/acl.ts and backend/matrix_advisor/policy/acl.py. Both test suites assert these exact results. Cases without \"lang\" are French (the default).",
  "cases": [
   {
    "name": "generated contract",
@@ -670,6 +670,95 @@
    },
    "allows": {
     "TCP/443": true
+   }
+  },
+  {
+   "name": "english: syntax errors",
+   "lang": "en",
+   "text": "permit tcp dst eq 70000\nallow everything\npermit icmp dst eq 3\npermit ip",
+   "observed": [],
+   "rules": [
+    {
+     "action": "permit",
+     "proto": "ip",
+     "lo": null,
+     "hi": null
+    }
+   ],
+   "errors": [
+    "Line 1: port out of range.",
+    "Line 2: “allow everything” is not a recognised ACE.",
+    "Line 3: a port only makes sense with tcp or udp."
+   ],
+   "validate": {
+    "errors": [
+     "Line 1: port out of range.",
+     "Line 2: “allow everything” is not a recognised ACE.",
+     "Line 3: a port only makes sense with tcp or udp."
+    ],
+    "warns": [
+     "“permit ip” opens all traffic between these two groups: contrary to default deny."
+    ],
+    "infos": []
+   },
+   "allows": {
+    "TCP/22": true
+   }
+  },
+  {
+   "name": "english: empty contract",
+   "lang": "en",
+   "text": "! only a comment\n",
+   "observed": [],
+   "rules": [],
+   "errors": [
+    "The contract is empty."
+   ],
+   "validate": {
+    "errors": [
+     "The contract is empty."
+    ],
+    "warns": [],
+    "infos": []
+   },
+   "allows": {}
+  },
+  {
+   "name": "english: blocked, unobserved and no final deny",
+   "lang": "en",
+   "text": "permit tcp dst eq 443\npermit tcp dst range 8000 8100",
+   "observed": [
+    "TCP/443",
+    "UDP/53"
+   ],
+   "rules": [
+    {
+     "action": "permit",
+     "proto": "tcp",
+     "lo": 443,
+     "hi": 443
+    },
+    {
+     "action": "permit",
+     "proto": "tcp",
+     "lo": 8000,
+     "hi": 8100
+    }
+   ],
+   "errors": [],
+   "validate": {
+    "errors": [],
+    "warns": [
+     "UDP/53 is observed but no longer permitted: this traffic will be blocked."
+    ],
+    "infos": [
+     "TCP/8000-8100 permitted but never observed on this pair.",
+     "No final “deny ip”: the default policy of the cell or the matrix applies."
+    ]
+   },
+   "allows": {
+    "TCP/8080": true,
+    "UDP/53": false
    }
   }
  ]

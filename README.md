@@ -222,7 +222,8 @@ cd frontend && npm install && npm run dev
   A job that runs less often than that, or has not run yet, is not protected: the dashboard warns
   until 30 days have been observed, and cloning by default limits the blast radius.
 - **Single matrix**, IPv4 SGACL generation, one administrator account.
-- **UI language**: French. Contributions for i18n are welcome.
+- **UI language**: French and English (switch in the header and on the login page, remembered per browser).
+  Proposal justifications follow `llm.language`.
 - The ISE simulator implements just enough of ERS/pxGrid for demos and tests; it is not a reference.
 
 ## License

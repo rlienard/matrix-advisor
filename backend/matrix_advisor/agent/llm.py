@@ -15,6 +15,7 @@ import time
 import httpx
 
 from ..config import LLMConfig
+from ..i18n import Message
 
 _IPV4 = re.compile(r"(?<![\d.])(\d{1,3}(?:\.\d{1,3}){3})(?:/\d{1,2})?(?![\d.])")
 _IPV6_CANDIDATE = re.compile(r"[0-9A-Fa-f:]*:[0-9A-Fa-f:]*:[0-9A-Fa-f:]*")
@@ -34,13 +35,13 @@ def assert_no_ip(text: str) -> None:
             ipaddress.ip_address(m.group(1))
         except ValueError:
             continue
-        raise PrivacyViolation("refus d’envoi : le message destiné au modèle contient une adresse IP")
+        raise PrivacyViolation(Message("llm_ipv4_refused"))
     for m in _IPV6_CANDIDATE.finditer(text):
         try:
             ipaddress.ip_address(m.group(0))
         except ValueError:
             continue
-        raise PrivacyViolation("refus d’envoi : le message destiné au modèle contient une adresse IPv6")
+        raise PrivacyViolation(Message("llm_ipv6_refused"))
 
 
 def _extract_json(text: str) -> dict:
@@ -53,7 +54,7 @@ def _extract_json(text: str) -> dict:
         m = re.search(r"\{.*\}", text, flags=re.DOTALL)
         if m:
             return json.loads(m.group(0))
-        raise LLMError(f"réponse du modèle non JSON : {text[:200]}")
+        raise LLMError(Message("llm_not_json", text=text[:200]))
 
 
 class LLMClient:
@@ -130,7 +131,7 @@ class LLMClient:
                 r.raise_for_status()
                 names = [m.get("name", "") for m in r.json().get("models", [])]
                 if not any(n == c.model or n.split(":")[0] == c.model for n in names):
-                    raise LLMError(f"modèle {c.model} absent d’Ollama (ollama pull {c.model})")
+                    raise LLMError(Message("llm_model_missing", model=c.model))
             elif c.provider == "openai":
                 headers = {"Authorization": f"Bearer {c.api_key}"} if c.api_key else {}
                 r = await self.http.get(self._url("/v1/models"), headers=headers)

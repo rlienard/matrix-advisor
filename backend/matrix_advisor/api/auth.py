@@ -7,6 +7,8 @@ import hmac
 from fastapi import HTTPException, Request, Response
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
+from ..i18n import Message, localize, parse_accept_language
+
 COOKIE = "ma_session"
 
 
@@ -45,8 +47,13 @@ def current_user(request: Request) -> str | None:
     return data.get("u")
 
 
+def lang(request: Request) -> str:
+    """Language of the user-facing messages of this request (the UI sends its own in Accept-Language)."""
+    return parse_accept_language(request.headers.get("accept-language"))
+
+
 def require_user(request: Request) -> str:
     user = current_user(request)
     if not user:
-        raise HTTPException(status_code=401, detail="Authentification requise.")
+        raise HTTPException(status_code=401, detail=localize(Message("auth_required"), lang(request)))
     return user

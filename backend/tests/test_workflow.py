@@ -173,3 +173,28 @@ def test_rare_flow_of_another_pair_blocks_in_place_change(client):
     analysis = client.post(f"/api/proposals/{p['id']}/analyse", json={"acl": "permit tcp dst eq 9100\ndeny ip"}).json()
     assert analysis["impacts"] == [{"src": "Employees", "dst": "Print_Servers", "spec": "TCP/631", "flows": 3}]
     assert not analysis["inplace_allowed"]
+
+
+def test_api_messages_follow_accept_language(client):
+    p = _props(client)[("Contractors", "Finance_DB")]
+    en = {"Accept-Language": "en-GB,en;q=0.9,fr;q=0.5"}
+    r = client.put(f"/api/proposals/{p['id']}/edit", json={"acl": "permit everything"}, headers=en)
+    assert r.json() == {"detail": "The SGACL contains errors.",
+                        "errors": ["Line 1: “permit everything” is not a recognised ACE."]}
+    r = client.put(f"/api/proposals/{p['id']}/edit", json={"acl": "permit everything"})
+    assert r.json()["detail"] == "La SGACL contient des erreurs."  # no header: French, as before
+    assert client.get("/api/proposals/nope", headers=en).json()["detail"] == "Proposal not found."
+    analysis = client.post(f"/api/proposals/{p['id']}/analyse", json={"acl": "permit tcp dst eq 1433"},
+                           headers=en).json()
+    assert analysis["validation"]["infos"] == ["No final “deny ip”: the default policy of the cell or the matrix applies."]
+    client.post("/api/auth/logout")
+    assert client.get("/api/status", headers=en).json()["detail"] == "Authentication required."
+    assert client.post("/api/auth/login", json={"password": "x"}, headers={"Accept-Language": "en"}).json() == {
+        "detail": "Incorrect password."}
+
+
+def test_ise_error_status_is_localised(client, sim_url):
+    cfg = client.get("/api/config").json()
+    cfg["ise"]["openapi"]["password"] = "wrong"
+    r = client.post("/api/config/test/ise", json={"config": cfg}, headers={"Accept-Language": "en"})
+    assert r.json() == {"ok": False, "message": "OpenAPI: ISE refused the authentication (check the ERS user and its role)."}

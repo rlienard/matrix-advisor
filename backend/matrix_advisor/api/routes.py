@@ -14,6 +14,7 @@ from pydantic import BaseModel, ValidationError
 from ..agent.actions import ActionError
 from ..agent.advisor import RANGES
 from ..agent.llm import LLMClient, LLMError
+from ..i18n import Message, localize
 from ..ise.client import ISEClient, ISEError
 from ..ise.pxgrid import SESSION_SERVICE, PxGridClient, PxGridError
 from ..store import utcnow
@@ -27,8 +28,16 @@ def ctx(request: Request):
     return request.app.state.ctx
 
 
-def _error(e: ActionError) -> JSONResponse:
-    return JSONResponse(status_code=e.status, content={"detail": str(e), **e.details})
+def _error(e: ActionError, request: Request) -> JSONResponse:
+    return JSONResponse(status_code=e.status, content={"detail": localize(e, auth.lang(request)), **e.details})
+
+
+def _t(request: Request, key: str, **params) -> str:
+    return Message(key, **params).render(auth.lang(request))
+
+
+def _err(request: Request, e: Exception) -> str:
+    return localize(e, auth.lang(request))
 
 
 # ---------------------------------------------------------------- auth
@@ -40,7 +49,7 @@ class LoginBody(BaseModel):
 def login(body: LoginBody, request: Request, response: Response):
     if not auth.check_password(request, body.password):
         time.sleep(1)
-        raise HTTPException(401, "Mot de passe incorrect.")
+        raise HTTPException(401, _t(request, "wrong_password"))
     auth.login(request, response)
     return {"user": "admin"}
 
@@ -56,11 +65,19 @@ def me(request: Request):
     return {"user": auth.current_user(request)}
 
 
+def _localized(value, lang: str):
+    """Render the catalog messages held in a status structure (last errors) in ``lang``."""
+    if isinstance(value, dict):
+        return {k: _localized(v, lang) for k, v in value.items()}
+    return localize(value, lang)
+
+
 # ---------------------------------------------------------------- status
 @router.get("/status")
 def status(request: Request, _: str = Depends(auth.require_user)):
     c = ctx(request)
     s = c.config.settings
+    lang = auth.lang(request)
     last = c.store.last_record_ts()
     fresh = last is not None and (utcnow() - last).total_seconds() <= s.collector.stale_after_seconds
     return {
@@ -68,8 +85,8 @@ def status(request: Request, _: str = Depends(auth.require_user)):
             "online": fresh, "last_record": last, "flows_per_s": c.store.flow_rate(),
             "stats": c.pipeline.stats, "input_file": s.collector.input_file,
         },
-        "ise": c.ise.summary(),
-        "llm": {**c.llm.status, "provider": s.llm.provider, "model": s.llm.model,
+        "ise": _localized(c.ise.summary(), lang),
+        "llm": {**_localized(c.llm.status, lang), "provider": s.llm.provider, "model": s.llm.model,
                 "cloud": s.llm.is_cloud},
         "learning": c.advisor.learning(),
         "observation": c.advisor.observation(),
@@ -159,8 +176,8 @@ def proposal(pid: str, request: Request, _: str = Depends(auth.require_user)):
     c = ctx(request)
     p = c.store.proposal(pid)
     if not p:
-        raise HTTPException(404, "Proposition introuvable.")
-    return {"proposal": p, "analysis": c.actions.analyse(p)}
+        raise HTTPException(404, _t(request, "proposal_not_found"))
+    return {"proposal": p, "analysis": c.actions.analyse(p, lang=auth.lang(request))}
 
 
 @router.post("/proposals/{pid}/analyse")
@@ -168,16 +185,16 @@ def analyse(pid: str, body: AclBody, request: Request, _: str = Depends(auth.req
     c = ctx(request)
     p = c.store.proposal(pid)
     if not p:
-        raise HTTPException(404, "Proposition introuvable.")
-    return c.actions.analyse(p, body.acl)
+        raise HTTPException(404, _t(request, "proposal_not_found"))
+    return c.actions.analyse(p, body.acl, auth.lang(request))
 
 
 @router.put("/proposals/{pid}/edit")
 def edit(pid: str, body: AclBody, request: Request, _: str = Depends(auth.require_user)):
     try:
-        return ctx(request).actions.save_edit(pid, body.acl)
+        return ctx(request).actions.save_edit(pid, body.acl, auth.lang(request))
     except ActionError as e:
-        return _error(e)
+        return _error(e, request)
 
 
 @router.put("/proposals/{pid}/mode")
@@ -185,15 +202,15 @@ def mode(pid: str, body: ModeBody, request: Request, _: str = Depends(auth.requi
     try:
         return ctx(request).actions.set_mode(pid, body.mode)
     except ActionError as e:
-        return _error(e)
+        return _error(e, request)
 
 
 @router.post("/proposals/{pid}/approve")
 async def approve(pid: str, body: ApproveBody, request: Request, user: str = Depends(auth.require_user)):
     try:
-        return await ctx(request).actions.approve(pid, user, body.acl, body.mode, body.merge)
+        return await ctx(request).actions.approve(pid, user, body.acl, body.mode, body.merge, auth.lang(request))
     except ActionError as e:
-        return _error(e)
+        return _error(e, request)
 
 
 @router.post("/proposals/{pid}/reject")
@@ -201,7 +218,7 @@ def reject(pid: str, request: Request, user: str = Depends(auth.require_user)):
     try:
         return ctx(request).actions.reject(pid, user)
     except ActionError as e:
-        return _error(e)
+        return _error(e, request)
 
 
 @router.post("/proposals/{pid}/reopen")
@@ -209,7 +226,7 @@ def reopen(pid: str, request: Request, user: str = Depends(auth.require_user)):
     try:
         return ctx(request).actions.reopen(pid, user)
     except ActionError as e:
-        return _error(e)
+        return _error(e, request)
 
 
 @router.post("/agent/run")
@@ -225,7 +242,7 @@ async def ise_sync(request: Request, _: str = Depends(auth.require_user)):
     try:
         m = await c.ise.reconcile()
     except ISEError as e:
-        return JSONResponse(status_code=502, content={"detail": str(e)})
+        return JSONResponse(status_code=502, content={"detail": _err(request, e)})
     c.advisor.wake()
     return {"synced_at": m.synced_at, "sgacls": len(m.sgacls), "cells": len(m.cells)}
 
@@ -248,7 +265,7 @@ async def pxgrid_nodes(body: ConfigBody, request: Request, _: str = Depends(auth
     try:
         nodes = await client.deployment_nodes()
     except ISEError as e:
-        return JSONResponse(status_code=502, content={"detail": str(e)})
+        return JSONResponse(status_code=502, content={"detail": _err(request, e)})
     finally:
         await client.close()
     return {"nodes": nodes, "pxgrid": [n for n in nodes if n["pxgrid"]]}
@@ -280,11 +297,10 @@ async def test_config(section: Literal["llm", "ise", "collector"], body: ConfigB
         client = LLMClient(settings.llm)
         try:
             res = await client.ping()
-            where = "API joignable" if settings.llm.is_cloud else "Endpoint joignable"
-            return {"ok": True, "message": f"{where} · modèle {settings.llm.model} disponible · "
-                                           f"{res['latency_ms']} ms. Aucune donnée réseau envoyée pendant le test."}
+            key = "test_llm_ok_cloud" if settings.llm.is_cloud else "test_llm_ok_local"
+            return {"ok": True, "message": _t(request, key, model=settings.llm.model, ms=res["latency_ms"])}
         except LLMError as e:
-            return {"ok": False, "message": str(e)}
+            return {"ok": False, "message": _err(request, e)}
         finally:
             await client.close()
 
@@ -293,10 +309,10 @@ async def test_config(section: Literal["llm", "ise", "collector"], body: ConfigB
         parts = []
         try:
             info = await client.ping()
-            parts.append(f"OpenAPI : authentifié sur {settings.ise.pan} · {info['sgt_total']} SGT.")
+            parts.append(_t(request, "test_openapi_ok", pan=settings.ise.pan, sgts=info["sgt_total"]))
         except ISEError as e:
             await client.close()
-            return {"ok": False, "message": f"OpenAPI : {e}"}
+            return {"ok": False, "message": _t(request, "test_openapi_failed", error=_err(request, e))}
         await client.close()
         px_cfg = settings.ise.pxgrid
         if px_cfg.node or px_cfg.base_url:
@@ -305,15 +321,15 @@ async def test_config(section: Literal["llm", "ise", "collector"], body: ConfigB
                 state = await px.ensure_account()
                 if state == "ENABLED":
                     await px.lookup(SESSION_SERVICE)
-                    parts.append(f"pxGrid : client « {px_cfg.client_name} » approuvé.")
+                    parts.append(_t(request, "test_pxgrid_ok", client=px_cfg.client_name))
                 else:
-                    parts.append(f"pxGrid : compte {state}, à approuver dans ISE (Administration > pxGrid).")
+                    parts.append(_t(request, "test_pxgrid_pending", state=state))
             except PxGridError as e:
-                return {"ok": False, "message": " ".join(parts) + f" pxGrid : {e}"}
+                return {"ok": False, "message": " ".join([*parts, _t(request, "test_pxgrid_failed", error=_err(request, e))])}
             finally:
                 await px.close()
         if not settings.ise.openapi.verify_tls:
-            parts.append("Attention : certificat TLS non vérifié.")
+            parts.append(_t(request, "test_tls_unverified"))
         return {"ok": True, "message": " ".join(parts)}
 
     col = settings.collector
@@ -321,18 +337,18 @@ async def test_config(section: Literal["llm", "ise", "collector"], body: ConfigB
         for cidr in col.allowed_exporters:
             ipaddress.ip_network(cidr, strict=False)
     except ValueError as e:
-        return {"ok": False, "message": f"Exporteurs autorisés invalides : {e}"}
+        return {"ok": False, "message": _t(request, "test_exporters_invalid", error=str(e))}
     if not os.path.exists(col.input_file):
-        return {"ok": False, "message": f"Aucune sortie GoFlow2 trouvée ({col.input_file}). "
-                                        "GoFlow2 est-il démarré avec -transport.file sur ce chemin ?"}
+        return {"ok": False, "message": _t(request, "test_goflow_missing", path=col.input_file)}
     age = time.time() - os.path.getmtime(col.input_file)
     last = c.store.last_record_ts()
     rate = c.store.flow_rate()
     if age > col.stale_after_seconds:
-        return {"ok": False, "message": f"GoFlow2 n’a rien écrit depuis {int(age)} s : aucun flux reçu "
-                                        f"sur les ports {col.ipfix_port}/{col.netflow_v9_port} ?"}
-    return {"ok": True, "message": f"GoFlow2 actif · environ {rate} flux/s agrégés · dernier flux "
-                                   f"{last:%H:%M:%S} UTC." if last else "GoFlow2 actif, en attente des premiers flux."}
+        return {"ok": False, "message": _t(request, "test_goflow_stale", age=int(age), ipfix=col.ipfix_port,
+                                           v9=col.netflow_v9_port)}
+    if not last:
+        return {"ok": True, "message": _t(request, "test_goflow_waiting")}
+    return {"ok": True, "message": _t(request, "test_goflow_ok", rate=rate, last=f"{last:%H:%M:%S}")}
 
 
 @router.get("/audit")

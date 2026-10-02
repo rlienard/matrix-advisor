@@ -12,6 +12,7 @@ import logging
 from datetime import UTC, datetime
 
 from ..config import ConfigStore
+from ..i18n import Message, message_of
 from ..ingest.resolver import SGTResolver
 from ..policy.matrix import Matrix
 from .client import ISEClient, ISEError
@@ -62,7 +63,7 @@ class ISEService:
         try:
             m = await self.client.read_matrix(default=ise.matrix_default)
         except ISEError as e:
-            self.status.update(online=False, last_error=str(e))
+            self.status.update(online=False, last_error=message_of(e))
             raise
         self.matrix = m
         self.resolver.set_tags({s.value: s.name for s in m.sgts.values()})
@@ -83,7 +84,7 @@ class ISEService:
                 await self.reconcile()
             except Exception as e:  # noqa: BLE001 - surfaced in status
                 log.warning("ISE reconcile failed: %s", e)
-                self.status.update(online=False, last_error=str(e))
+                self.status.update(online=False, last_error=message_of(e))
             wait = self.config.settings.ise.reconcile_minutes * 60
             try:
                 await asyncio.wait_for(self._wait_any(), timeout=wait)
@@ -113,7 +114,7 @@ class ISEService:
         state = await px.ensure_account()
         self.status["pxgrid"]["state"] = state
         if state != "ENABLED":
-            raise PxGridError(f"compte pxGrid {state} : approuvez « {px.cfg.client_name} » dans ISE")
+            raise PxGridError(Message("pxgrid_account_state", state=state, client=px.cfg.client_name))
         self.resolver.set_sessions(await px.sessions())
         prefixes: dict[str, str] = {}
         for b in await px.bindings():
@@ -147,7 +148,7 @@ class ISEService:
                 await asyncio.sleep(px.cfg.poll_seconds)
             except Exception as e:  # noqa: BLE001
                 log.warning("pxGrid refresh failed: %s", e)
-                self.status["pxgrid"].update(error=str(e))
+                self.status["pxgrid"].update(error=message_of(e))
                 await asyncio.sleep(30)
 
     async def _on_pxgrid_message(self, topic: str, body: dict) -> None:

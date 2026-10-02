@@ -19,6 +19,7 @@ Details: `docs/architecture.md`. Session context and design history: README and 
 ```
 backend/matrix_advisor/
   config.py            YAML config + secrets (env vars > secrets.json 0600); never write secrets to YAML
+  i18n.py              FR/EN API messages (Message keys, Accept-Language)
   store.py             DuckDB schema and queries (flow_minutes 7 days, pair_daily, proposals, audit)
   ingest/              goflow.py (tail NDJSON, orient), resolver.py (IP→SGT), pipeline.py (loop)
   ise/                 client.py (ERS + OpenAPI), pxgrid.py (pxGrid 2.0 + STOMP), service.py (cache, reconcile)
@@ -30,7 +31,7 @@ backend/matrix_advisor/
 backend/tests/         pytest; test_workflow.py runs the full flow against the ISE simulator, test_pxgrid_ws.py the
                        STOMP subscription; fixtures/acl_parity.json is shared with frontend/tests
 frontend/src/          React + TS: components/{Dashboard,Sankey,Trend,PairPanel,Settings,Header,Login}.tsx,
-                       acl.ts mirrors policy/acl.py for live feedback
+                       acl.ts mirrors policy/acl.py for live feedback, messages.ts + i18n.tsx (FR/EN, useI18n)
 simulators/ise_sim/    fake ISE (ERS, deployment nodes, pxGrid REST + STOMP pubsub, /sim/conflict|session|reset|state)
 simulators/flowgen/    IPFIX generator with the demo scenarios (no dependencies; --sgt adds CTS group tags)
 deploy/                config templates (example, demo, lima), goflow2/mapping.yaml, lima/lima-demo.sh
@@ -83,10 +84,15 @@ MA_CONFIG_TEMPLATE=/app/deploy/config.demo.yaml docker compose --profile demo --
 
 ## Conventions
 
-- Code, comments, README, commit messages: **English**. UI strings and user-facing API error messages:
-  **French** (e.g. « Hors ligne » without hyphen, « En ligne », « Cisco ISE : En ligne (synchro …) »).
-- Keep `frontend/src/acl.ts` and `backend/matrix_advisor/policy/acl.py` behaviourally identical; a change to either
-  needs a case in `backend/tests/fixtures/acl_parity.json`, which both test suites assert.
+- Code, comments, README, commit messages: **English**. UI strings and user-facing API messages exist in
+  **French and English**. French is the default and the reference wording (e.g. « Hors ligne » without hyphen,
+  « En ligne », « Cisco ISE : En ligne (synchro …) »). UI text lives in `frontend/src/messages.ts` (`en` is
+  type-checked against `fr`); API messages in `backend/matrix_advisor/i18n.py` (`Message(key, …)`, rendered in the
+  request's `Accept-Language`, which the UI sets from its FR/EN switch). Heuristic risk reasons and the fallback
+  justification follow `llm.language` (French for `fr`, English otherwise) because they are stored with the proposal.
+- Keep `frontend/src/acl.ts` and `backend/matrix_advisor/policy/acl.py` behaviourally identical, messages included
+  in both languages; a change to either needs a case in `backend/tests/fixtures/acl_parity.json` (optional `"lang"`),
+  which both test suites assert.
 - UI look: dark theme inspired by Cisco Cloud Control (Magnetic `onecd-dark` tokens in `styles.css`:
   page `#0F1214`, card `#171B20`, primary `#649EF5`, ok `#4CBF7F`, Inter). No Cisco logo or product name:
   this is not an official Cisco product.
@@ -110,4 +116,4 @@ MA_CONFIG_TEMPLATE=/app/deploy/config.demo.yaml docker compose --profile demo --
   a real switch export to confirm.
 - Docker images and the Lima script have not been built/run yet; check arm64 availability of
   `netsampler/goflow2` on Apple Silicon.
-- Roadmap: multiple matrices, i18n.
+- Roadmap: multiple matrices.

@@ -12,6 +12,7 @@ import logging
 from datetime import datetime, timedelta
 
 from ..config import ConfigStore
+from ..i18n import content_lang, message_of
 from ..ise.service import ISEService
 from ..policy import acl
 from ..policy.impact import new_contract_name
@@ -46,7 +47,7 @@ class LLMHolder:
             res = await self.client.ping()
             self.status.update(online=True, error=None, latency_ms=res["latency_ms"])
         except LLMError as e:
-            self.status.update(online=False, error=str(e))
+            self.status.update(online=False, error=message_of(e))
         self.status["last_check"] = utcnow()
 
     async def run(self) -> None:
@@ -185,14 +186,15 @@ class Advisor:
             "activity": obs.get("activity") or {},
             "cell_contracts": cov["contracts"],
         }
-        assessment = risk.assess(features)
+        lang = content_lang(settings.llm.language)
+        assessment = risk.assess(features, lang)
         proposal = {
             "src": src, "dst": dst, "kind": kind, "base_contract": base.name if base else None,
             "base_sgacl_id": base.id if base else None, "specs": specs, "proposed_acl": proposed,
             "edited_acl": None, "status": "pending", "mode": mode,
             "cell_fingerprint": m.cell_fingerprint(src, dst),
             "risk": assessment["risk"], "recommendation": assessment["recommendation"],
-            "justification": risk.fallback_justification(features, assessment, kind, base.name if base else None),
+            "justification": risk.fallback_justification(features, assessment, kind, base.name if base else None, lang),
             "features": {**features, "heuristics": assessment["reasons"],
                          "new_name": new_contract_name(settings.ise.sgacl_prefix, src, dst,
                                                        {a.name for a in m.sgacls.values()})},

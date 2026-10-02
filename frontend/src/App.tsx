@@ -4,12 +4,14 @@ import Dashboard from "./components/Dashboard";
 import Header from "./components/Header";
 import Login from "./components/Login";
 import Settings from "./components/Settings";
+import { useI18n } from "./i18n";
 import type { Status } from "./types";
 
 export default function App() {
   const [user, setUser] = useState<string | null | undefined>(undefined);
   const [view, setView] = useState<"dash" | "settings">("dash");
   const [status, setStatus] = useState<Status | null>(null);
+  const { lang } = useI18n();
 
   useEffect(() => {
     setUnauthorizedHandler(() => setUser(null));
@@ -18,7 +20,7 @@ export default function App() {
 
   const refreshStatus = useCallback(() => {
     get<Status>("/status").then(setStatus).catch(() => undefined);
-  }, []);
+  }, [lang]); // error messages in the status come back in the UI language
 
   useEffect(() => {
     if (!user) return;

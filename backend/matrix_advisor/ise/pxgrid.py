@@ -20,6 +20,7 @@ from collections.abc import Awaitable, Callable
 import httpx
 
 from ..config import PxGridConfig
+from ..i18n import Message
 
 log = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ class PxGridClient:
         except httpx.HTTPError as e:
             raise PxGridError(f"{op}: {e.__class__.__name__}: {e}") from e
         if r.status_code == 401:
-            raise PxGridError(f"{op}: non autorisé (compte pxGrid « {self.cfg.client_name} » inconnu ou refusé).")
+            raise PxGridError(Message("pxgrid_unauthorized", op=op, client=self.cfg.client_name))
         if r.status_code >= 400:
             raise PxGridError(f"{op}: HTTP {r.status_code} {r.text[:200]}")
         return r.json() if r.content else {}
@@ -98,7 +99,7 @@ class PxGridClient:
     async def _service_call(self, service: str, op: str, body: dict | None = None) -> dict:
         svc = await self.lookup(service)
         if not svc:
-            raise PxGridError(f"service {service} introuvable (pxGrid activé ? compte approuvé ?)")
+            raise PxGridError(Message("pxgrid_service_missing", service=service))
         url = svc["properties"]["restBaseUrl"].rstrip("/") + "/" + op
         secret = await self.secret(svc["nodeName"])
         try:
@@ -132,7 +133,7 @@ class PxGridClient:
         session_svc = await self.lookup(SESSION_SERVICE)
         trustsec_svc = await self.lookup(TRUSTSEC_CONFIG_SERVICE)
         if not pubsub:
-            raise PxGridError("service pubsub introuvable")
+            raise PxGridError(Message("pxgrid_pubsub_missing"))
         topics: list[str] = []
         if session_svc and session_svc["properties"].get("sessionTopic"):
             topics.append(session_svc["properties"]["sessionTopic"])
