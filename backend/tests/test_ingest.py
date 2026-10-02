@@ -4,7 +4,9 @@ import os
 import pytest
 
 from matrix_advisor.agent.llm import PrivacyViolation, assert_no_ip
+from matrix_advisor.config import ConfigStore
 from matrix_advisor.ingest.goflow import ExporterFilter, NDJSONTailer, orient, parse_record
+from matrix_advisor.ingest.pipeline import IngestPipeline
 from matrix_advisor.ingest.resolver import SGTResolver
 
 
@@ -69,3 +71,79 @@ def test_llm_payload_guard():
         assert_no_ip('{"host": "10.10.1.7"}')
     with pytest.raises(PrivacyViolation):
         assert_no_ip("fe80::1 talked")
+
+
+def test_parse_record_with_sgt_tags():
+    rec = {"type": "IPFIX", "time_flow_end_ns": 1_790_000_000_000_000_000, "sampler_address": "10.0.0.1",
+           "src_addr": "10.10.1.7", "dst_addr": "10.20.1.5", "proto": "TCP", "src_port": 51000, "dst_port": 443,
+           "bytes": 100, "packets": 2, "src_sgt": 4, "dst_sgt": 10}
+    f = parse_record(json.dumps(rec).encode())
+    assert (f.src_tag, f.dst_tag) == (4, 10)
+    # A reply (server -> client) is folded onto the request: the tags are swapped with the addresses.
+    reply = {**rec, "src_addr": "10.20.1.5", "dst_addr": "10.10.1.7", "src_port": 443, "dst_port": 51000,
+             "src_sgt": 10, "dst_sgt": 4}
+    f = parse_record(json.dumps(reply).encode())
+    assert (f.src_ip, f.src_tag, f.dst_ip, f.dst_tag) == ("10.10.1.7", 4, "10.20.1.5", 10)
+    # 0 is "unknown" in CTS fields; missing or garbage values are ignored.
+    f = parse_record(json.dumps({**rec, "src_sgt": 0, "dst_sgt": "x"}).encode())
+    assert (f.src_tag, f.dst_tag) == (None, None)
+    assert parse_record(json.dumps({k: v for k, v in rec.items() if "sgt" not in k}).encode()).src_tag is None
+
+
+class _Store:
+    def __init__(self):
+        self.rows = []
+
+    def ingest(self, rows):
+        self.rows += rows
+        return len(rows)
+
+    def flush_parquet(self):
+        return None
+
+    def rollup_daily(self):
+        pass
+
+    def apply_retention(self, days):
+        pass
+
+
+def _pipeline(tmp_path, sgt_source):
+    flows = tmp_path / "flows.ndjson"
+    base = {"type": "IPFIX", "time_flow_end_ns": 1_790_000_000_000_000_000, "sampler_address": "10.0.0.1",
+            "proto": "TCP", "src_port": 51000, "dst_port": 443, "bytes": 100, "packets": 2}
+    records = [
+        # tags known to ISE win over IP resolution (the pxGrid session says Contractors)
+        {**base, "src_addr": "10.10.1.7", "dst_addr": "10.20.1.5", "src_sgt": 4, "dst_sgt": 10},
+        # unknown tag value: fall back to the address; tag 0 (Internet side): address as well
+        {**base, "src_addr": "10.10.1.8", "dst_addr": "198.51.100.7", "src_sgt": 99, "dst_sgt": 0},
+        # no tags at all
+        {**base, "src_addr": "10.10.1.9", "dst_addr": "10.20.1.5"},
+    ]
+    flows.write_text("".join(json.dumps(r) + "\n" for r in records))
+    (tmp_path / "config.yaml").write_text(
+        f"collector: {{input_file: {flows}, allowed_exporters: [], sgt_source: {sgt_source}}}\n")
+    resolver = SGTResolver()
+    resolver.set_sessions({"10.10.1.7": "Contractors", "10.10.1.8": "Employees", "10.10.1.9": "Employees"})
+    resolver.set_bindings({"10.20.1.0/24": "Web_Servers"})
+    resolver.set_tags({4: "Employees", 10: "Web_Servers"})
+    store = _Store()
+    pipeline = IngestPipeline(ConfigStore(tmp_path / "config.yaml"), store, resolver)
+    assert pipeline.tick() == 3
+    return pipeline, [(r[2], r[9], r[4], r[10]) for r in store.rows]
+
+
+def test_pipeline_prefers_sgt_from_flow_records(tmp_path):
+    pipeline, rows = _pipeline(tmp_path, "auto")
+    assert rows == [
+        ("10.10.1.7", "Employees", "10.20.1.5", "Web_Servers"),
+        ("10.10.1.8", "Employees", "198.51.100.7", "Internet"),
+        ("10.10.1.9", "Employees", "10.20.1.5", "Web_Servers"),
+    ]
+    assert (pipeline.stats["sgt_from_flow"], pipeline.stats["unknown_tag"]) == (2, 1)
+
+
+def test_pipeline_ignores_tags_when_sgt_source_is_ip(tmp_path):
+    pipeline, rows = _pipeline(tmp_path, "ip")
+    assert rows[0][1] == "Contractors"
+    assert (pipeline.stats["sgt_from_flow"], pipeline.stats["unknown_tag"]) == (0, 0)

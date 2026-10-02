@@ -1,0 +1,55 @@
+# GoFlow2 mapping for Matrix Advisor (goflow2 -mapping=mapping.yaml).
+#
+# Adds the Cisco TrustSec group tags to the JSON output as src_sgt / dst_sgt when switches export
+# them (Flexible NetFlow "collect cts source group-tag" / "collect cts destination group-tag").
+# Cisco numbers them 34000 / 34001. In NetFlow v9 that is the field type itself; in IPFIX the high
+# bit is the enterprise bit, so they arrive as enterprise elements 1232 / 1233 with PEN 9 (Cisco).
+# Records without these fields are unchanged and attributed to SGTs by IP address.
+formatter:
+  fields:
+    - type
+    - time_received_ns
+    - sequence_num
+    - sampling_rate
+    - sampler_address
+    - time_flow_start_ns
+    - time_flow_end_ns
+    - bytes
+    - packets
+    - src_addr
+    - dst_addr
+    - etype
+    - proto
+    - src_port
+    - dst_port
+    - in_if
+    - out_if
+    - src_sgt
+    - dst_sgt
+  key:
+    - sampler_address
+  protobuf:
+    - name: src_sgt
+      index: 1000
+      type: varint
+    - name: dst_sgt
+      index: 1001
+      type: varint
+ipfix:
+  mapping:
+    - field: 1232
+      penprovided: true
+      pen: 9
+      destination: src_sgt
+    - field: 1233
+      penprovided: true
+      pen: 9
+      destination: dst_sgt
+netflowv9:
+  mapping:
+    - field: 34 # samplingInterval provided within the template
+      destination: sampling_rate
+    - field: 34000
+      destination: src_sgt
+    - field: 34001
+      destination: dst_sgt

@@ -65,6 +65,7 @@ class ISEService:
             self.status.update(online=False, last_error=str(e))
             raise
         self.matrix = m
+        self.resolver.set_tags({s.value: s.name for s in m.sgts.values()})
         self.status.update(online=True, last_sync=m.synced_at, last_error=None)
         log.info("ISE matrix synced: %d SGT, %d SGACL, %d cells", len(m.sgts), len(m.sgacls), len(m.cells))
         return m

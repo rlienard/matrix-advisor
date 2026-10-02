@@ -164,6 +164,9 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
                 check: (v) => (v === String(cfg.collector.ipfix_port) ? "Doit différer du port IPFIX" : isInt(1, 65535)(v)) },
               { path: "collector.allowed_exporters", label: "Exporteurs autorisés", kind: "list", required: true, mono: true, help: "CIDR séparés par des virgules",
                 check: (v) => (v.split(",").every((x) => /^[0-9a-fA-F.:]+(\/\d{1,3})?$/.test(x.trim())) ? "" : "Format attendu : 10.10.0.0/16, 10.20.0.0/16") },
+              { path: "collector.sgt_source", label: "Attribution des SGT", kind: "select",
+                options: [["auto", "SGT exporté dans les flux, sinon adresse IP"], ["ip", "Adresse IP uniquement (pxGrid, SXP, liaisons statiques)"]],
+                help: "Champs Cisco CTS source/destination group-tag, avec deploy/goflow2/mapping.yaml" },
             ],
           },
           {

@@ -1,6 +1,8 @@
 """IP -> SGT resolution.
 
-Sources, by priority:
+A group tag exported in the flow record itself (Cisco CTS fields) wins when its value is
+known in the ISE SGT table: it is what the switch enforced on, with no dependency on pxGrid.
+Otherwise the address is resolved from these sources, by priority:
 1. Active endpoint sessions from pxGrid (exact IP -> SGT, e.g. 802.1X / MAB users).
 2. IP-SGT bindings (pxGrid SXP service, ISE static mappings) as prefixes.
 3. Static bindings from the configuration.
@@ -33,6 +35,7 @@ class SGTResolver:
         self._prefixes: list[tuple[ipaddress._BaseNetwork, str]] = []
         self._static: list[tuple[ipaddress._BaseNetwork, str]] = []
         self._cache: dict[str, str] = {}
+        self._tags: dict[int, str] = {}
 
     @staticmethod
     def _sorted(items: dict[str, str]) -> list[tuple[ipaddress._BaseNetwork, str]]:
@@ -67,9 +70,21 @@ class SGTResolver:
             self._static = self._sorted(prefixes)
             self._cache.clear()
 
+    def set_tags(self, values: dict[int, str]) -> None:
+        """SGT value -> name, from the ISE SGT table."""
+        with self._lock:
+            self._tags = dict(values)
+
+    def tag_name(self, tag: int | None) -> str | None:
+        if tag is None:
+            return None
+        with self._lock:
+            return self._tags.get(tag)
+
     def counts(self) -> dict:
         with self._lock:
-            return {"sessions": len(self._exact), "bindings": len(self._prefixes), "static": len(self._static)}
+            return {"sessions": len(self._exact), "bindings": len(self._prefixes), "static": len(self._static),
+                    "tags": len(self._tags)}
 
     def resolve(self, ip: str) -> str:
         with self._lock:

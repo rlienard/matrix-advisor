@@ -20,11 +20,13 @@ services:
       - -format=json
       - -transport=file
       - -transport.file=/flows/goflow2.ndjson
+      - -mapping=/etc/goflow2/mapping.yaml   # adds Cisco CTS group tags (src_sgt / dst_sgt)
     ports:
       - "2055:2055/udp"   # NetFlow v9
       - "4739:4739/udp"   # IPFIX
     volumes:
       - flows:/flows
+      - ./deploy/goflow2/mapping.yaml:/etc/goflow2/mapping.yaml:ro
     restart: unless-stopped
 
   matrix-advisor:
@@ -71,7 +73,7 @@ services:
   flowgen:
     profiles: ["demo"]
     build: simulators/flowgen
-    command: ["--collector", "goflow2:4739", "--speed", "3"]
+    command: ["--collector", "goflow2:4739", "--speed", "3", "--sgt"]
     depends_on:
       - goflow2
 

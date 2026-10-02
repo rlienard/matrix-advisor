@@ -63,6 +63,11 @@ def _sim(c):
     return httpx.get(c.sim + "/sim/state").json()
 
 
+def test_ise_sync_loads_sgt_values_for_flow_tags(client):
+    resolver = client.app.state.ctx.resolver
+    assert (resolver.tag_name(4), resolver.tag_name(13), resolver.tag_name(999)) == ("Employees", "Finance_DB", None)
+
+
 def test_auth_required(client):
     client.post("/api/auth/logout")
     assert client.get("/api/dashboard").status_code == 401

@@ -32,8 +32,8 @@ backend/tests/         pytest; test_workflow.py runs the full flow against the I
 frontend/src/          React + TS: components/{Dashboard,Sankey,Trend,PairPanel,Settings,Header,Login}.tsx,
                        acl.ts mirrors policy/acl.py for live feedback
 simulators/ise_sim/    fake ISE (ERS, deployment nodes, pxGrid REST + STOMP pubsub, /sim/conflict|session|reset|state)
-simulators/flowgen/    IPFIX generator with the demo scenarios (no dependencies)
-deploy/                config templates (example, demo, lima), lima/lima-demo.sh
+simulators/flowgen/    IPFIX generator with the demo scenarios (no dependencies; --sgt adds CTS group tags)
+deploy/                config templates (example, demo, lima), goflow2/mapping.yaml, lima/lima-demo.sh
 ```
 
 ## Commands
@@ -52,7 +52,8 @@ npm test                                   # acl.ts parity cases (shared with ba
 
 # local end-to-end without Docker
 cd simulators/ise_sim && uvicorn ise_sim:app --port 9060
-goflow2 -listen netflow://:4739 -format json -transport file -transport.file /tmp/goflow2.ndjson
+goflow2 -listen netflow://:4739 -format json -transport file -transport.file /tmp/goflow2.ndjson \
+  -mapping deploy/goflow2/mapping.yaml
 python simulators/flowgen/flowgen.py --collector 127.0.0.1:4739 --speed 5
 # config: openapi.base_url / pxgrid.base_url = http://127.0.0.1:9060, learning_days: 0,
 #         collector.input_file = /tmp/goflow2.ndjson, allowed_exporters: [127.0.0.0/8]
@@ -104,6 +105,9 @@ MA_CONFIG_TEMPLATE=/app/deploy/config.demo.yaml docker compose --profile demo --
 - ISE staging matrix / workflow mode is not driven by the API (`write_mode: monitor` is the substitute);
   policy push to devices is left to the ISE admin.
 - GoFlow2 has no Parquet output (JSON/protobuf only); the backend writes Parquet itself.
+- SGT in flow records: `deploy/goflow2/mapping.yaml` assumes NetFlow v9 fields 34000/34001 and IPFIX
+  enterprise elements 1232/1233 with PEN 9 (verified with flowgen `--sgt` + GoFlow2 2.2.7 only): capture
+  a real switch export to confirm.
 - Docker images and the Lima script have not been built/run yet; check arm64 availability of
   `netsampler/goflow2` on Apple Silicon.
-- Roadmap: SGT inside flow records (Cisco CTS fields via GoFlow2 mapping), multiple matrices, i18n.
+- Roadmap: multiple matrices, i18n.

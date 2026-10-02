@@ -57,7 +57,9 @@ def build_context(config_path: str | None = None, store_path: str | None = None)
     llm = LLMHolder(config)
     advisor = Advisor(config, store, ise, llm)
     actions = Actions(config, store, ise, advisor)
-    pipeline = IngestPipeline(config, store, resolver, ready=lambda: ise.context_ready)
+    # Flows wait for the SGT table (tags exported in flow records) and the endpoint context (pxGrid).
+    pipeline = IngestPipeline(config, store, resolver,
+                              ready=lambda: ise.context_ready and bool(ise.matrix.sgts))
     return Context(config, store, resolver, ise, llm, advisor, actions, pipeline)
 
 

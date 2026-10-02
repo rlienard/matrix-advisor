@@ -172,6 +172,7 @@ export interface Config {
     retention_days: number;
     aggregation_seconds: number;
     stale_after_seconds: number;
+    sgt_source: "auto" | "ip";
   };
   server?: Record<string, unknown>;
 }
