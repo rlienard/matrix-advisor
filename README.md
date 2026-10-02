@@ -44,6 +44,7 @@ SD-Access and Default-Deny without Tears**.
 | Monitor first | New cells are written in `MONITOR` status by default (`ise.write_mode: monitor`). Existing cells keep their status. |
 | Ownership | Created SGACLs carry a configurable prefix (`MA_`) and a description pointing to the proposal. Every decision is in the audit log. |
 | Learning phase | Nothing is proposed during the first `learning_days` (14 by default), so the admin gets a stable list instead of a stream. |
+| Rare-flow guard | Proposals and impact analysis use the whole retained history (30 days), not just the last week. Pairs seen on only one or two days are flagged *Flux rare* and sent to review, and the dashboard warns until a full month of traffic has been observed. |
 
 ## Architecture
 
@@ -217,8 +218,9 @@ cd frontend && npm install && npm run dev
   resolution (`collector.sgt_source: auto`). Tag 0, or a value unknown to ISE, falls back to the IP
   address. The field encoding (NetFlow v9 34000/34001, IPFIX enterprise 1232/1233 PEN 9) is checked
   against the generator only, not yet against a switch.
-- **Rare flows**: impact analysis only knows traffic seen during the observation window. A monthly
-  batch never observed will not be protected; cloning by default limits the blast radius.
+- **Rare flows**: the advisor and impact analysis only know traffic seen within `retention_days`.
+  A job that runs less often than that, or has not run yet, is not protected: the dashboard warns
+  until 30 days have been observed, and cloning by default limits the blast radius.
 - **Single matrix**, IPv4 SGACL generation, one administrator account.
 - **UI language**: French. Contributions for i18n are welcome.
 - The ISE simulator implements just enough of ERS/pxGrid for demos and tests; it is not a reference.

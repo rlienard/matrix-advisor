@@ -72,6 +72,7 @@ def status(request: Request, _: str = Depends(auth.require_user)):
         "llm": {**c.llm.status, "provider": s.llm.provider, "model": s.llm.model,
                 "cloud": s.llm.is_cloud},
         "learning": c.advisor.learning(),
+        "observation": c.advisor.observation(),
         "write_mode": s.ise.write_mode,
         "prefix": s.ise.sgacl_prefix,
     }
@@ -101,6 +102,7 @@ def dashboard(request: Request, range: Range = "7d", _: str = Depends(auth.requi
                            "shared_with": [f"{s} → {d}" for s, d in c.ise.matrix.contract_users(a.id) if (s, d) != key]}
                           for a in c.ise.matrix.cell_sgacls(*key)],
             "monitor": cov["monitor"], "first_seen": v["first_seen"],
+            "activity": v["activity"], "rare": v["rare"],
             "ports": [{"spec": p["spec"], "flows": p["flows"], "hosts": p["hosts"], "covered": p["spec"] in covered}
                       for p in v["ports"]],
             "blocked_flows": sum(p["flows"] for p in v["ports"] if p["spec"] not in covered),
@@ -127,6 +129,7 @@ def dashboard(request: Request, range: Range = "7d", _: str = Depends(auth.requi
         },
         "trend": c.store.coverage_trend(since),
         "learning": c.advisor.learning(),
+        "observation": c.advisor.observation(),
     }
 
 

@@ -20,6 +20,10 @@ Answer with one JSON object and nothing else:
  "recommendation": "approve" | "review" | "reject",
  "justification": "<2 to 3 short sentences in LANGUAGE for the administrator, concrete, citing the signals>"}
 
+"activity" tells on how many distinct days the pair was seen out of the days observed. Traffic seen
+on very few days may be an infrequent but legitimate job (monthly batch, backups): say so, and warn
+that ports it uses but that were not observed will be denied.
+
 Rules: do not invent facts that are not in the input; if heuristic signals flag a risk, do not
 rate the risk lower than they do; keep the justification under 60 words."""
 
@@ -37,6 +41,7 @@ def user_prompt(features: dict, assessment: dict, proposal: dict) -> str:
             "source_hosts": features["source_hosts"],
             "first_seen": features["first_seen"],
             "behaviour": features["behaviour"],
+            "activity": features.get("activity") or {},
         },
         "existing_contract_on_cell": features.get("cell_contracts") or [],
         "proposal": {

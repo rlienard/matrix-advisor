@@ -138,3 +138,38 @@ def test_config_masks_secrets(client):
     assert client.put("/api/config", json={"config": cfg}).json()["ise"]["sgacl_prefix"] == "AI_"
     nodes = client.post("/api/ise/pxgrid-nodes", json={"config": cfg}).json()
     assert [n["hostname"] for n in nodes["pxgrid"]] == ["ise-px1", "ise-px2"]
+
+
+def _ingest(c, src, dst, proto, port, days_ago, n=3):
+    """Flows of one SGT pair ``days_ago`` days back, rolled up as the ingest loop would."""
+    store = c.app.state.ctx.store
+    day = utcnow() - timedelta(days=days_ago)
+    store.ingest([((day - timedelta(minutes=i)).strftime("%Y-%m-%d %H:%M:%S.%f"), "10.0.0.1", f"10.99.0.{i}",
+                   50000, "10.99.1.1", port, proto, 1000, 10, src, dst) for i in range(n)])
+    if days_ago:
+        store.rollup_daily(day)
+
+
+def test_monthly_job_seen_weeks_ago_gets_a_rare_flow_proposal(client):
+    _ingest(client, "Contractors", "HR_Servers", "TCP", 22, days_ago=20)
+    assert client.post("/api/agent/run").json()["created"] == 1
+    p = _props(client)[("Contractors", "HR_Servers")]
+    assert p["features"]["activity"] == {"days_seen": 1, "observed_days": 21, "last_seen_days_ago": 20}
+    assert p["risk"] != "low" and p["recommendation"] != "approve"
+    assert any(r.startswith("trafic rare") for r in p["features"]["heuristics"])
+    links = {link["id"]: link for link in client.get("/api/dashboard?range=30d").json()["links"]}
+    assert links["Contractors|HR_Servers"]["rare"] is True
+    obs = client.get("/api/status").json()["observation"]
+    assert obs == {"days": 21, "recommended_days": 30, "retention_days": 30, "sufficient": False}
+
+
+def test_rare_flow_of_another_pair_blocks_in_place_change(client):
+    # Employees -> Print_Servers uses Printing (9100, 631); its 631 traffic is a job seen 20 days ago only.
+    _ingest(client, "Employees", "Print_Servers", "TCP", 631, days_ago=20)
+    _ingest(client, "Contractors", "Print_Servers", "TCP", 9100, days_ago=0)
+    client.post("/api/agent/run")
+    p = _props(client)[("Contractors", "Print_Servers")]
+    assert (p["kind"], p["base_contract"]) == ("reuse", "Printing")
+    analysis = client.post(f"/api/proposals/{p['id']}/analyse", json={"acl": "permit tcp dst eq 9100\ndeny ip"}).json()
+    assert analysis["impacts"] == [{"src": "Employees", "dst": "Print_Servers", "spec": "TCP/631", "flows": 3}]
+    assert not analysis["inplace_allowed"]

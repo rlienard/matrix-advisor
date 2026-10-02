@@ -245,6 +245,32 @@ class Store:
                 out[(src, dst)] = datetime.combine(day, time())
         return out
 
+    def pair_activity(self, since: datetime) -> dict[tuple[str, str], dict]:
+        """Per SGT pair: number of distinct days with traffic since ``since``, and the last one."""
+        recent_from, daily_from = self._split(since)
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT DISTINCT src_sgt, dst_sgt, CAST(minute AS DATE) FROM flow_minutes WHERE minute >= ?",
+                [recent_from],
+            ).fetchall()
+            if daily_from is not None:
+                rows += self.conn.execute(
+                    "SELECT DISTINCT src_sgt, dst_sgt, day FROM pair_daily WHERE day >= ? AND day < ?",
+                    [daily_from.date(), recent_from.date()],
+                ).fetchall()
+        days: dict[tuple[str, str], set] = {}
+        for src, dst, day in rows:
+            days.setdefault((src, dst), set()).add(day)
+        return {k: {"days_seen": len(v), "last_day": max(v)} for k, v in days.items()}
+
+    def observation_start(self) -> datetime | None:
+        """Oldest traffic still held (detailed minutes or daily rollups)."""
+        with self.lock:
+            minute = self.conn.execute("SELECT min(minute) FROM flow_minutes").fetchone()[0]
+            day = self.conn.execute("SELECT min(day) FROM pair_daily").fetchone()[0]
+        candidates = [x for x in (minute, datetime.combine(day, time()) if day else None) if x is not None]
+        return min(candidates) if candidates else None
+
     def pair_behaviour(self, src: str, dst: str, since: datetime) -> dict:
         """Deterministic features used for risk scoring. Contains no IP address."""
         with self.lock:

@@ -55,15 +55,21 @@ permitted (they log instead of dropping). A pair is:
 ## Advisor (`matrix_advisor/agent`)
 
 Runs every `aggregation_seconds` in `event` mode (only new pairs/ports cost an LLM call) or every
-`scheduled_minutes`. After the learning phase, for each non-covered pair without an open proposal:
+`scheduled_minutes`. Pairs are taken from the whole retained history (`max(7, retention_days)`
+days, daily rollups beyond the 7 days of per-minute detail), so a monthly job seen weeks ago is still
+proposed before default-deny. After the learning phase, for each non-covered pair without an open
+proposal:
 
 1. **Kind** (deterministic): `external` if a side has no SGT; `extend` if the cell has a contract
    (the prefixed one if any); `reuse` if an existing SGACL covers all observed ports with at most two
    extra permits (same destination group first, then fewest extras); else `new` with one permit per
    observed port and `deny ip log`.
 2. **Features** (no IP): ports with flow and host counts, number of source hosts, first seen,
-   off-hours ratio, periodic host pairs and their interval (beaconing).
-3. **Heuristics** (`risk.py`): risk floor and reasons.
+   off-hours ratio, periodic host pairs and their interval (beaconing), activity (distinct days with
+   traffic out of the days of history, days since the last flow).
+3. **Heuristics** (`risk.py`): risk floor and reasons. A *rare* pair (seen on at most 2 days out of
+   at least 7 days of history) is raised to `medium` / `review`: it may be a periodic job whose ports
+   were not all observed.
 4. **LLM** (`llm.py`, `prompts.py`): JSON answer `{risk, recommendation, justification}`. The final
    risk is the max of heuristic and model risk. Payloads are checked for IP addresses before sending.
 
@@ -79,7 +85,8 @@ is never replaced automatically.
    - `new`: create `<prefix><src>_to_<dst>`, add it to the cell;
    - `reuse` unchanged: add the existing SGACL to the cell;
    - changed existing contract, `clone`: create `<prefix><base>_<src>` and point only this cell to it;
-   - changed existing contract, `inplace`: allowed only if the impact analysis finds no observed traffic
+   - changed existing contract, `inplace`: allowed only if the impact analysis (over the same retained
+     history as the advisor) finds no observed traffic
      of another pair using the contract that would become denied; the SGACL is re-read and must not
      have changed since the proposal.
 4. Create or update the cell: new cells get `MONITOR` or `ENABLED` per `write_mode`, existing cells

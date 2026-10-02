@@ -90,11 +90,39 @@ class Advisor:
             p["bytes"] += row["bytes"]
         hosts = self.store.pair_hosts(since)
         first = self.store.first_seen()
+        activity = self.store.pair_activity(since)
+        observed_days = self.observed_days(since)
+        today = utcnow().date()
         for key, p in pairs.items():
             p["hosts"] = hosts.get(key, 0)
             p["first_seen"] = first.get(key)
             p["ports"].sort(key=lambda x: -x["flows"])
+            a = activity.get(key)
+            p["activity"] = {
+                "days_seen": a["days_seen"] if a else 0, "observed_days": observed_days,
+                "last_seen_days_ago": (today - a["last_day"]).days if a else None,
+            }
+            p["rare"] = risk.is_rare(p["activity"])
         return pairs
+
+    def observed_days(self, since: datetime) -> int:
+        """Days of traffic history available since ``since`` (today included)."""
+        start = self.store.observation_start()
+        if start is None:
+            return 0
+        return (utcnow().date() - max(start, since).date()).days + 1
+
+    def analysis_window(self) -> timedelta:
+        """Proposals cover every pair still in the daily rollups, so that a monthly job seen weeks
+        ago is not denied by default-deny just because it fell out of the last 7 days."""
+        return timedelta(days=max(7, self.config.settings.collector.retention_days))
+
+    def observation(self) -> dict:
+        """Is the history long enough for monthly jobs to have been seen before default-deny?"""
+        retention = self.config.settings.collector.retention_days
+        days = self.observed_days(utcnow() - timedelta(days=retention))
+        return {"days": days, "recommended_days": risk.MONTHLY_CYCLE_DAYS, "retention_days": retention,
+                "sufficient": days >= risk.MONTHLY_CYCLE_DAYS}
 
     def observed_ports(self, since: datetime) -> dict[tuple[str, str], list[dict]]:
         return {k: v["ports"] for k, v in self.observed(since).items()}
@@ -154,6 +182,7 @@ class Advisor:
             "total_flows": obs["flows"], "source_hosts": obs["hosts"],
             "first_seen": obs["first_seen"].date().isoformat() if obs.get("first_seen") else None,
             "behaviour": self.store.pair_behaviour(src, dst, utcnow() - timedelta(days=7)),
+            "activity": obs.get("activity") or {},
             "cell_contracts": cov["contracts"],
         }
         assessment = risk.assess(features)
@@ -207,7 +236,7 @@ class Advisor:
         """Create or refresh proposals for uncovered pairs. Returns the number created."""
         if self.ise.matrix.synced_at is None:
             return 0
-        views = self.pair_views(utcnow() - RANGES["7d"])
+        views = self.pair_views(utcnow() - self.analysis_window())
         allowed = sum(1 for v in views if v["coverage"]["status"] == "allowed")
         partial = sum(1 for v in views if v["coverage"]["status"] == "partial")
         self.store.record_coverage(len(views), allowed, partial, len(views) - allowed - partial)
