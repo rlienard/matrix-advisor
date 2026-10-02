@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/acl.ts","./src/api.ts","./src/main.tsx","./src/types.ts","./src/util.ts","./src/components/Dashboard.tsx","./src/components/Header.tsx","./src/components/Login.tsx","./src/components/PairPanel.tsx","./src/components/Sankey.tsx","./src/components/Settings.tsx","./src/components/Trend.tsx"],"version":"5.9.3"}

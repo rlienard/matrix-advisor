@@ -1,0 +1,81 @@
+# Matrix Advisor
+#
+#   Production (real ISE, real switches):
+#     cp .env.example .env && edit it
+#     docker compose up -d
+#
+#   Demo without a lab (ISE simulator + IPFIX generator + local LLM):
+#     MA_CONFIG_TEMPLATE=/app/deploy/config.demo.yaml docker compose --profile demo --profile llm up -d
+#     docker compose exec ollama ollama pull qwen2.5:14b
+#
+# The UI is served on http://<host>:8080. The admin password is generated on first start:
+#     docker compose exec matrix-advisor cat /data/initial-admin-password
+
+services:
+  goflow2:
+    image: ${GOFLOW2_IMAGE:-netsampler/goflow2:latest}
+    user: "0:0"  # writes into the shared "flows" volume
+    command:
+      - -listen=netflow://:2055,netflow://:4739
+      - -format=json
+      - -transport=file
+      - -transport.file=/flows/goflow2.ndjson
+    ports:
+      - "2055:2055/udp"   # NetFlow v9
+      - "4739:4739/udp"   # IPFIX
+    volumes:
+      - flows:/flows
+    restart: unless-stopped
+
+  matrix-advisor:
+    build: .
+    image: matrix-advisor:latest
+    environment:
+      MA_CONFIG_TEMPLATE: ${MA_CONFIG_TEMPLATE:-/app/deploy/config.example.yaml}
+      MA_ADMIN_PASSWORD: ${MA_ADMIN_PASSWORD:-}
+      MA_ISE_PASSWORD: ${MA_ISE_PASSWORD:-}
+      MA_PXGRID_PASSWORD: ${MA_PXGRID_PASSWORD:-}
+      MA_LLM_API_KEY: ${MA_LLM_API_KEY:-}
+      MA_LOG_LEVEL: ${MA_LOG_LEVEL:-INFO}
+    ports:
+      - "8080:8000"
+    volumes:
+      - data:/data
+      - flows:/flows
+      # pxGrid client certificate, ISE CA…  (read-only)
+      - ./certs:/certs:ro
+    depends_on:
+      - goflow2
+    restart: unless-stopped
+
+  ollama:
+    profiles: ["llm"]
+    image: ollama/ollama:latest
+    volumes:
+      - ollama:/root/.ollama
+    # GPU (NVIDIA Container Toolkit):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices: [{ driver: nvidia, count: all, capabilities: [gpu] }]
+    restart: unless-stopped
+
+  ise-sim:
+    profiles: ["demo"]
+    build: simulators/ise_sim
+    environment:
+      SIM_PASSWORD: demo-password
+    ports:
+      - "9060:9060"   # /sim/conflict, /sim/reset, /sim/state for the demo
+
+  flowgen:
+    profiles: ["demo"]
+    build: simulators/flowgen
+    command: ["--collector", "goflow2:4739", "--speed", "3"]
+    depends_on:
+      - goflow2
+
+volumes:
+  data:
+  flows:
+  ollama:

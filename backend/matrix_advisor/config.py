@@ -102,7 +102,7 @@ class ISEConfig(BaseModel):
 
 class CollectorConfig(BaseModel):
     type: Literal["goflow2"] = "goflow2"
-    input_file: str = "/data/goflow/flows.ndjson"
+    input_file: str = "/flows/goflow2.ndjson"
     listen: str = "0.0.0.0"
     ipfix_port: int = Field(4739, ge=1, le=65535)
     netflow_v9_port: int = Field(2055, ge=1, le=65535)

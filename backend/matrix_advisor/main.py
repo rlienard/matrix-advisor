@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import secrets
+import shutil
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,7 +42,13 @@ class Context:
 
 
 def build_context(config_path: str | None = None, store_path: str | None = None) -> Context:
-    config = ConfigStore(config_path or default_config_path())
+    path = Path(config_path or default_config_path())
+    template = os.environ.get("MA_CONFIG_TEMPLATE")
+    if not path.exists() and template and Path(template).exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(template, path)
+        log.warning("No configuration found: initialised %s from %s", path, template)
+    config = ConfigStore(path)
     _first_run_secrets(config)
     col = config.settings.collector
     store = Store(store_path or col.duckdb_path, parquet_dir=col.parquet_dir)

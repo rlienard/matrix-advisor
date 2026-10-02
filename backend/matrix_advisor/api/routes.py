@@ -90,10 +90,9 @@ def dashboard(request: Request, range: Range = "7d", _: str = Depends(auth.requi
         key = (v["src"], v["dst"])
         status_ = cov["status"]
         prop = pending.get(key)
-        if status_ != "allowed" and not prop:
-            last = c.store.last_decision_for(*key)
-            if last and last["status"] == "rejected":
-                status_ = "rejected"
+        decision = c.store.last_decision_for(*key)
+        if status_ != "allowed" and not prop and decision and decision["status"] == "rejected":
+            status_ = "rejected"
         covered = set(cov["covered"])
         links.append({
             "id": f"{v['src']}|{v['dst']}", "src": v["src"], "dst": v["dst"], "flows": v["flows"],
@@ -106,6 +105,7 @@ def dashboard(request: Request, range: Range = "7d", _: str = Depends(auth.requi
                       for p in v["ports"]],
             "blocked_flows": sum(p["flows"] for p in v["ports"] if p["spec"] not in covered),
             "proposal_id": prop["id"] if prop else None,
+            "last_decision_id": decision["id"] if decision else None,
             "risk": prop["risk"] if prop else None,
             "kind": prop["kind"] if prop else None,
         })

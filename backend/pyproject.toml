@@ -6,7 +6,6 @@ build-backend = "setuptools.build_meta"
 name = "matrix-advisor"
 version = "0.1.0"
 description = "AI-assisted TrustSec matrix builder for SD-Access default-deny, driven by NetFlow/IPFIX and Cisco ISE"
-readme = "../README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
 dependencies = [

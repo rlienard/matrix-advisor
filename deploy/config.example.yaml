@@ -1,0 +1,55 @@
+# Matrix Advisor configuration (production template).
+# Secrets are never stored here: ${VAR} placeholders are read from the environment, or from
+# /data/secrets.json (0600) when entered in the web UI.
+
+llm:
+  provider: ollama              # ollama | openai (vLLM, LM Studio…) | anthropic | azure
+  endpoint: http://ollama:11434
+  model: qwen2.5:14b
+  api_key: ${MA_LLM_API_KEY}
+  temperature: 0.1
+  timeout_s: 60
+  trigger: event                # event: analyse as soon as a new SGT pair appears
+  learning_days: 14             # observe silently before proposing anything
+  language: fr
+
+ise:
+  pan: ise-pan.example.local
+  openapi:
+    username: matrix-advisor
+    password: ${MA_ISE_PASSWORD}
+    port: 443
+    verify_tls: true
+    ca_cert: /certs/ise-ca.pem
+  pxgrid:
+    node: ise-px1.example.local
+    client_name: matrix-advisor
+    auth: certificate           # certificate | password
+    client_cert: /certs/pxgrid-client.pem
+    client_key: /certs/pxgrid-client.key
+    ca_cert: /certs/ise-ca.pem
+    password: ${MA_PXGRID_PASSWORD}
+    subscribe: true
+  write_mode: monitor           # monitor: new cells written as MONITOR; enforce: ENABLED
+  sgacl_prefix: MA_
+  reconcile_minutes: 15
+  matrix_default: deny          # used to compute what default-deny would block
+  static_bindings: {}           # extra CIDR -> SGT name mappings, e.g. {"10.50.0.0/16": "Printers"}
+
+collector:
+  input_file: /flows/goflow2.ndjson
+  listen: 0.0.0.0
+  ipfix_port: 4739
+  netflow_v9_port: 2055
+  allowed_exporters: [10.0.0.0/8]
+  parquet_dir: /data/parquet
+  duckdb_path: /data/matrix-advisor.duckdb
+  rotate_minutes: 60
+  retention_days: 30
+  aggregation_seconds: 60
+  stale_after_seconds: 300
+
+server:
+  admin_password: ${MA_ADMIN_PASSWORD}
+  session_secret: ${MA_SESSION_SECRET}
+  session_hours: 12
