@@ -46,11 +46,11 @@ def assert_no_ip(text: str) -> None:
 def _extract_json(text: str) -> dict:
     text = text.strip()
     if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.S)
+        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.DOTALL)
     try:
         return json.loads(text)
     except ValueError:
-        m = re.search(r"\{.*\}", text, flags=re.S)
+        m = re.search(r"\{.*\}", text, flags=re.DOTALL)
         if m:
             return json.loads(m.group(0))
         raise LLMError(f"réponse du modèle non JSON : {text[:200]}")

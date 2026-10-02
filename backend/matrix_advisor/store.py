@@ -8,15 +8,17 @@ agent and the dashboard work on aggregates only.
 from __future__ import annotations
 
 import csv
+import itertools
 import json
 import os
 import statistics
 import tempfile
 import threading
 import uuid
-from datetime import datetime, timedelta, timezone
+from collections.abc import Iterable
+from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import duckdb
 
@@ -53,7 +55,7 @@ PROPOSAL_JSON_FIELDS = ("specs", "features", "result")
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class Store:
@@ -240,7 +242,7 @@ class Store:
         for src, dst, day in days:
             cur = out.get((src, dst))
             if cur is None or day < cur.date():
-                out[(src, dst)] = datetime(day.year, day.month, day.day)
+                out[(src, dst)] = datetime.combine(day, time())
         return out
 
     def pair_behaviour(self, src: str, dst: str, since: datetime) -> dict:
@@ -269,7 +271,7 @@ class Store:
         for _, _, minutes in series:
             if len(minutes) < 6:
                 continue
-            gaps = [b - a for a, b in zip(minutes, minutes[1:])]
+            gaps = [b - a for a, b in itertools.pairwise(minutes)]
             mean = statistics.mean(gaps)
             if mean >= 120 and statistics.pstdev(gaps) / mean < 0.15:
                 periodic += 1
@@ -310,7 +312,7 @@ class Store:
                 [since],
             ).fetchall()
         return [
-            {"ts": datetime.fromtimestamp(float(r[0]), tz=timezone.utc).replace(tzinfo=None).isoformat(),
+            {"ts": datetime.fromtimestamp(float(r[0]), tz=UTC).replace(tzinfo=None).isoformat(),
              "uncovered": int(r[1])}
             for r in rows
         ]

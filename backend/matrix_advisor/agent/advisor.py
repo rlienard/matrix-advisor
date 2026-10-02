@@ -250,13 +250,13 @@ class Advisor:
         while True:
             try:
                 await self.analyse()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("advisor run failed")
             llm = self.config.settings.llm
             delay = self.config.settings.collector.aggregation_seconds if llm.trigger == "event" \
                 else llm.scheduled_minutes * 60
             try:
                 await asyncio.wait_for(self._wake.wait(), timeout=delay)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
             self._wake.clear()

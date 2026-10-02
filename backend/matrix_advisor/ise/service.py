@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from ..config import ConfigStore
 from ..ingest.resolver import SGTResolver
@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class ISEService:
@@ -86,14 +86,14 @@ class ISEService:
             wait = self.config.settings.ise.reconcile_minutes * 60
             try:
                 await asyncio.wait_for(self._wait_any(), timeout=wait)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
             self._reconcile_now.clear()
 
     async def _wait_any(self) -> None:
         reconcile = asyncio.create_task(self._reconcile_now.wait())
         restart = asyncio.create_task(self._restart.wait())
-        done, pending = await asyncio.wait({reconcile, restart}, return_when=asyncio.FIRST_COMPLETED)
+        _, pending = await asyncio.wait({reconcile, restart}, return_when=asyncio.FIRST_COMPLETED)
         for t in pending:
             t.cancel()
 

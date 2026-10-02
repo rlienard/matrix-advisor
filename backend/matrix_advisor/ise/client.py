@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import ssl
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 
@@ -129,7 +129,7 @@ class ISEClient:
         acls_raw = await asyncio.gather(*(self._get("sgacl", i["id"], "Sgacl") for i in acl_items))
         cells_raw = await asyncio.gather(*(self._get("egressmatrixcell", i["id"], "EgressMatrixCell") for i in cell_items))
 
-        m = Matrix(default=default, synced_at=datetime.now(timezone.utc).replace(tzinfo=None))
+        m = Matrix(default=default, synced_at=datetime.now(UTC).replace(tzinfo=None))
         for s in sgts_raw:
             m.sgts[s["id"]] = Sgt(s["id"], s["name"], int(s.get("value", -1)), s.get("description", ""))
         for a in acls_raw:

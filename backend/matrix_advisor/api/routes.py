@@ -15,7 +15,7 @@ from ..agent.actions import ActionError
 from ..agent.advisor import RANGES
 from ..agent.llm import LLMClient, LLMError
 from ..ise.client import ISEClient, ISEError
-from ..ise.pxgrid import PxGridClient, PxGridError, SESSION_SERVICE
+from ..ise.pxgrid import SESSION_SERVICE, PxGridClient, PxGridError
 from ..store import utcnow
 from . import auth
 
