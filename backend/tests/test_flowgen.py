@@ -1,5 +1,6 @@
 """The IPFIX generator's optional CTS group tags (enterprise elements), as GoFlow2 maps them."""
 
+import importlib
 import struct
 import sys
 from pathlib import Path
@@ -7,8 +8,8 @@ from pathlib import Path
 SIM = Path(__file__).resolve().parents[2] / "simulators"
 sys.path[:0] = [str(SIM / "flowgen"), str(SIM / "ise_sim")]
 
-import flowgen  # noqa: E402
-import ise_sim  # noqa: E402
+flowgen = importlib.import_module("flowgen")
+ise_sim = importlib.import_module("ise_sim")
 
 
 def test_template_declares_cisco_sgt_enterprise_elements():
