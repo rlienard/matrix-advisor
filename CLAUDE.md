@@ -47,6 +47,7 @@ MA_CONFIG=/path/to/config.yaml matrix-advisor   # API on :8000 (MA_STATIC_DIR=fr
 # frontend (dev server proxies /api to :8000)
 cd frontend && npm install && npm run dev
 npm run build                              # runs tsc -b, must type-check
+npm test                                   # acl.ts parity cases (shared with backend/tests/fixtures/acl_parity.json)
 
 # local end-to-end without Docker
 cd simulators/ise_sim && uvicorn ise_sim:app --port 9060
@@ -82,7 +83,8 @@ MA_CONFIG_TEMPLATE=/app/deploy/config.demo.yaml docker compose --profile demo --
 
 - Code, comments, README, commit messages: **English**. UI strings and user-facing API error messages:
   **French** (e.g. « Hors ligne » without hyphen, « En ligne », « Cisco ISE : En ligne (synchro …) »).
-- Keep `frontend/src/acl.ts` and `backend/matrix_advisor/policy/acl.py` behaviourally identical.
+- Keep `frontend/src/acl.ts` and `backend/matrix_advisor/policy/acl.py` behaviourally identical; a change to either
+  needs a case in `backend/tests/fixtures/acl_parity.json`, which both test suites assert.
 - UI look: dark theme inspired by Cisco Cloud Control (Magnetic `onecd-dark` tokens in `styles.css`:
   page `#0F1214`, card `#171B20`, primary `#649EF5`, ok `#4CBF7F`, Inter). No Cisco logo or product name:
   this is not an official Cisco product.
