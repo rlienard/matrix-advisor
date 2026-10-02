@@ -145,10 +145,49 @@ def _tag(v) -> int | None:
     return tag if 0 < tag < 65536 else None
 
 
+_DECODER = json.JSONDecoder()
+
+
+def decode_records(line: bytes) -> tuple[list, int]:
+    """JSON values held by one line of GoFlow2 output, and how many unparsable pieces it had.
+
+    GoFlow2's file transport, with several workers, occasionally writes two records with no
+    newline between them (``{...}{...}``). Such a line is split rather than dropped, which
+    would silently lose flows. Text that cannot be decoded counts as one malformed piece;
+    records decoded before it are kept.
+    """
+    try:
+        text = line.decode()
+    except UnicodeDecodeError:
+        return [], 1
+    try:
+        return [json.loads(text)], 0
+    except ValueError:
+        pass
+    values: list = []
+    pos, end = 0, len(text)
+    while True:
+        while pos < end and text[pos].isspace():
+            pos += 1
+        if pos >= end:
+            return values, 0
+        try:
+            value, pos = _DECODER.raw_decode(text, pos)
+        except ValueError:
+            return values, 1
+        values.append(value)
+
+
 def parse_record(line: bytes) -> Flow | None:
     try:
         rec = json.loads(line)
     except (ValueError, UnicodeDecodeError):
+        return None
+    return flow_from_record(rec)
+
+
+def flow_from_record(rec) -> Flow | None:
+    if not isinstance(rec, dict):
         return None
     src, dst = rec.get("src_addr") or rec.get("SrcAddr"), rec.get("dst_addr") or rec.get("DstAddr")
     if not src or not dst:
