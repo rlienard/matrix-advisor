@@ -27,10 +27,11 @@ backend/matrix_advisor/
                        actions.py (approve/reject/edit and ISE writes)
   api/                 routes.py (REST), auth.py (single admin, signed cookie)
   main.py              wiring, background workers, static UI
-backend/tests/         pytest; test_workflow.py runs the full flow against the ISE simulator
+backend/tests/         pytest; test_workflow.py runs the full flow against the ISE simulator, test_pxgrid_ws.py the
+                       STOMP subscription; fixtures/acl_parity.json is shared with frontend/tests
 frontend/src/          React + TS: components/{Dashboard,Sankey,Trend,PairPanel,Settings,Header,Login}.tsx,
                        acl.ts mirrors policy/acl.py for live feedback
-simulators/ise_sim/    fake ISE (ERS, deployment nodes, pxGrid REST, /sim/conflict|reset|state)
+simulators/ise_sim/    fake ISE (ERS, deployment nodes, pxGrid REST + STOMP pubsub, /sim/conflict|session|reset|state)
 simulators/flowgen/    IPFIX generator with the demo scenarios (no dependencies)
 deploy/                config templates (example, demo, lima), lima/lima-demo.sh
 ```
@@ -47,6 +48,7 @@ MA_CONFIG=/path/to/config.yaml matrix-advisor   # API on :8000 (MA_STATIC_DIR=fr
 # frontend (dev server proxies /api to :8000)
 cd frontend && npm install && npm run dev
 npm run build                              # runs tsc -b, must type-check
+npm test                                   # acl.ts parity cases (shared with backend/tests/fixtures/acl_parity.json)
 
 # local end-to-end without Docker
 cd simulators/ise_sim && uvicorn ise_sim:app --port 9060
@@ -82,7 +84,8 @@ MA_CONFIG_TEMPLATE=/app/deploy/config.demo.yaml docker compose --profile demo --
 
 - Code, comments, README, commit messages: **English**. UI strings and user-facing API error messages:
   **French** (e.g. « Hors ligne » without hyphen, « En ligne », « Cisco ISE : En ligne (synchro …) »).
-- Keep `frontend/src/acl.ts` and `backend/matrix_advisor/policy/acl.py` behaviourally identical.
+- Keep `frontend/src/acl.ts` and `backend/matrix_advisor/policy/acl.py` behaviourally identical; a change to either
+  needs a case in `backend/tests/fixtures/acl_parity.json`, which both test suites assert.
 - UI look: dark theme inspired by Cisco Cloud Control (Magnetic `onecd-dark` tokens in `styles.css`:
   page `#0F1214`, card `#171B20`, primary `#649EF5`, ok `#4CBF7F`, Inter). No Cisco logo or product name:
   this is not an official Cisco product.
@@ -96,7 +99,8 @@ MA_CONFIG_TEMPLATE=/app/deploy/config.demo.yaml docker compose --profile demo --
 
 - ERS paths and JSON wrappers (`Sgt`, `Sgacl`, `EgressMatrixCell`), `/api/v1/deployment/node`, pxGrid control
   and REST calls were written from knowledge of ISE 3.x, not checked against official docs: validate in a lab.
-- pxGrid websocket (STOMP) subscription is untested (the simulator has no websocket; polling fallback is tested).
+- pxGrid websocket (STOMP) subscription is tested only against the simulator, whose topics and message bodies are
+  approximations (SGACL and egress cell changes share `securityGroupAclTopic`): check frames on a real ISE.
 - ISE staging matrix / workflow mode is not driven by the API (`write_mode: monitor` is the substitute);
   policy push to devices is left to the ISE admin.
 - GoFlow2 has no Parquet output (JSON/protobuf only); the backend writes Parquet itself.

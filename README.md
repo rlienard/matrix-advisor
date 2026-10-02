@@ -70,7 +70,7 @@ More detail in [docs/architecture.md](docs/architecture.md).
 | Backend | Python 3.11+, FastAPI, DuckDB, httpx, websockets (pxGrid STOMP) |
 | Frontend | React + TypeScript + Vite |
 | LLM | Ollama, any OpenAI-compatible endpoint (vLLM, LM Studio), Anthropic, Azure OpenAI |
-| Demo | ISE simulator (ERS + pxGrid REST) and an IPFIX traffic generator |
+| Demo | ISE simulator (ERS, pxGrid REST and STOMP pubsub) and an IPFIX traffic generator |
 
 ## Quick start: demo without a lab
 

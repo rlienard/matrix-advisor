@@ -1,0 +1,676 @@
+{
+ "_comment": "Shared cases for frontend/src/acl.ts and backend/matrix_advisor/policy/acl.py. Both test suites assert these exact results.",
+ "cases": [
+  {
+   "name": "generated contract",
+   "text": "permit tcp dst eq 443 log\npermit udp dst range 5000 5100 log\ndeny ip log",
+   "observed": [
+    "TCP/443",
+    "UDP/5000-5100"
+   ],
+   "rules": [
+    {
+     "action": "permit",
+     "proto": "tcp",
+     "lo": 443,
+     "hi": 443
+    },
+    {
+     "action": "permit",
+     "proto": "udp",
+     "lo": 5000,
+     "hi": 5100
+    },
+    {
+     "action": "deny",
+     "proto": "ip",
+     "lo": null,
+     "hi": null
+    }
+   ],
+   "errors": [],
+   "validate": {
+    "errors": [],
+    "warns": [],
+    "infos": []
+   },
+   "allows": {
+    "TCP/443": true,
+    "TCP/80": false,
+    "UDP/5050": true,
+    "UDP/4999-5000": false
+   }
+  },
+  {
+   "name": "diff markers, comments, blank lines",
+   "text": "  permit tcp dst eq 22\n+ permit tcp dst eq 443\n\n! comment\n# other\n  deny ip",
+   "observed": [
+    "TCP/443"
+   ],
+   "rules": [
+    {
+     "action": "permit",
+     "proto": "tcp",
+     "lo": 22,
+     "hi": 22
+    },
+    {
+     "action": "permit",
+     "proto": "tcp",
+     "lo": 443,
+     "hi": 443
+    },
+    {
+     "action": "deny",
+     "proto": "ip",
+     "lo": null,
+     "hi": null
+    }
+   ],
+   "errors": [],
+   "validate": {
+    "errors": [],
+    "warns": [],
+    "infos": [
+     "TCP/22 autorisé mais jamais observé sur cette paire."
+    ]
+   },
+   "allows": {
+    "TCP/22": true,
+    "TCP/443": true
+   }
+  },
+  {
+   "name": "case insensitive keywords",
+   "text": "PERMIT TCP DST EQ 80\nDeny IP",
+   "observed": [
+    "TCP/80"
+   ],
+   "rules": [
+    {
+     "action": "permit",
+     "proto": "tcp",
+     "lo": 80,
+     "hi": 80
+    },
+    {
+     "action": "deny",
+     "proto": "ip",
+     "lo": null,
+     "hi": null
+    }
+   ],
+   "errors": [],
+   "validate": {
+    "errors": [],
+    "warns": [],
+    "infos": []
+   },
+   "allows": {
+    "TCP/80": true,
+    "tcp/80": true
+   }
+  },
+  {
+   "name": "empty contract",
+   "text": "",
+   "observed": [],
+   "rules": [],
+   "errors": [
+    "Le contrat est vide."
+   ],
+   "validate": {
+    "errors": [
+     "Le contrat est vide."
+    ],
+    "warns": [],
+    "infos": []
+   },
+   "allows": {}
+  },
+  {
+   "name": "only comments",
+   "text": "! nothing\n# here",
+   "observed": [],
+   "rules": [],
+   "errors": [
+    "Le contrat est vide."
+   ],
+   "validate": {
+    "errors": [
+     "Le contrat est vide."
+    ],
+    "warns": [],
+    "infos": []
+   },
+   "allows": {}
+  },
+  {
+   "name": "unrecognised ACE",
+   "text": "permit tcp any any eq 443\ndeny ip",
+   "observed": [],
+   "rules": [
+    {
+     "action": "deny",
+     "proto": "ip",
+     "lo": null,
+     "hi": null
+    }
+   ],
+   "errors": [
+    "Ligne 1 : « permit tcp any any eq 443 » n’est pas une ACE reconnue."
+   ],
+   "validate": {
+    "errors": [
+     "Ligne 1 : « permit tcp any any eq 443 » n’est pas une ACE reconnue."
+    ],
+    "warns": [],
+    "infos": []
+   },
+   "allows": {}
+  },
+  {
+   "name": "source port syntax is rejected",
+   "text": "permit tcp src eq 443",
+   "observed": [],
+   "rules": [],
+   "errors": [
+    "Ligne 1 : « permit tcp src eq 443 » n’est pas une ACE reconnue."
+   ],
+   "validate": {
+    "errors": [
+     "Ligne 1 : « permit tcp src eq 443 » n’est pas une ACE reconnue."
+    ],
+    "warns": [],
+    "infos": []
+   },
+   "allows": {}
+  },
+  {
+   "name": "port zero",
+   "text": "permit tcp dst eq 0",
+   "observed": [],
+   "rules": [],
+   "errors": [
+    "Ligne 1 : port hors plage."
+   ],
+   "validate": {
+    "errors": [
+     "Ligne 1 : port hors plage."
+    ],
+    "warns": [],
+    "infos": []
+   },
+   "allows": {}
+  },
+  {
+   "name": "port above 65535",
+   "text": "permit udp dst eq 70000",
+   "observed": [],
+   "rules": [],
+   "errors": [
+    "Ligne 1 : port hors plage."
+   ],
+   "validate": {
+    "errors": [
+     "Ligne 1 : port hors plage."
+    ],
+    "warns": [],
+    "infos": []
+   },
+   "allows": {}
+  },
+  {
+   "name": "inverted range",
+   "text": "permit tcp dst range 200 100",
+   "observed": [],
+   "rules": [],
+   "errors": [
+    "Ligne 1 : port hors plage."
+   ],
+   "validate": {
+    "errors": [
+     "Ligne 1 : port hors plage."
+    ],
+    "warns": [],
+    "infos": []
+   },
+   "allows": {}
+  },
+  {
+   "name": "port boundaries",
+   "text": "permit tcp dst eq 1\npermit tcp dst eq 65535\ndeny ip",
+   "observed": [
+    "TCP/1",
+    "TCP/65535"
+   ],
+   "rules": [
+    {
+     "action": "permit",
+     "proto": "tcp",
+     "lo": 1,
+     "hi": 1
+    },
+    {
+     "action": "permit",
+     "proto": "tcp",
+     "lo": 65535,
+     "hi": 65535
+    },
+    {
+     "action": "deny",
+     "proto": "ip",
+     "lo": null,
+     "hi": null
+    }
+   ],
+   "errors": [],
+   "validate": {
+    "errors": [],
+    "warns": [],
+    "infos": []
+   },
+   "allows": {
+    "TCP/1": true,
+    "TCP/65535": true,
+    "TCP/2": false
+   }
+  },
+  {
+   "name": "port on icmp",
+   "text": "permit icmp dst eq 8",
+   "observed": [],
+   "rules": [],
+   "errors": [
+    "Ligne 1 : un port n’a de sens qu’avec tcp ou udp."
+   ],
+   "validate": {
+    "errors": [
+     "Ligne 1 : un port n’a de sens qu’avec tcp ou udp."
+    ],
+    "warns": [],
+    "infos": []
+   },
+   "allows": {}
+  },
+  {
+   "name": "port on ip",
+   "text": "permit ip dst eq 80",
+   "observed": [],
+   "rules": [],
+   "errors": [
+    "Ligne 1 : un port n’a de sens qu’avec tcp ou udp."
+   ],
+   "validate": {
+    "errors": [
+     "Ligne 1 : un port n’a de sens qu’avec tcp ou udp."
+    ],
+    "warns": [],
+    "infos": []
+   },
+   "allows": {}
+  },
+  {
+   "name": "errors and valid lines mixed",
+   "text": "permit tcp dst eq 443\nbogus\ndeny ip",
+   "observed": [
+    "TCP/443"
+   ],
+   "rules": [
+    {
+     "action": "permit",
+     "proto": "tcp",
+     "lo": 443,
+     "hi": 443
+    },
+    {
+     "action": "deny",
+     "proto": "ip",
+     "lo": null,
+     "hi": null
+    }
+   ],
+   "errors": [
+    "Ligne 2 : « bogus » n’est pas une ACE reconnue."
+   ],
+   "validate": {
+    "errors": [
+     "Ligne 2 : « bogus » n’est pas une ACE reconnue."
+    ],
+    "warns": [],
+    "infos": []
+   },
+   "allows": {
+    "TCP/443": true
+   }
+  },
+  {
+   "name": "permit ip warns",
+   "text": "permit ip",
+   "observed": [
+    "TCP/443",
+    "ICMP"
+   ],
+   "rules": [
+    {
+     "action": "permit",
+     "proto": "ip",
+     "lo": null,
+     "hi": null
+    }
+   ],
+   "errors": [],
+   "validate": {
+    "errors": [],
+    "warns": [
+     "« permit ip » ouvre tout le trafic entre ces deux groupes : contraire au deny par défaut."
+    ],
+    "infos": [
+     "Pas de « deny ip » final : c’est la politique par défaut de la cellule ou de la matrice qui s’applique."
+    ]
+   },
+   "allows": {
+    "TCP/443": true,
+    "ICMP": true,
+    "UDP/53": true
+   }
+  },
+  {
+   "name": "observed traffic no longer allowed",
+   "text": "permit tcp dst eq 443\ndeny ip",
+   "observed": [
+    "TCP/443",
+    "TCP/8443",
+    "ICMP"
+   ],
+   "rules": [
+    {
+     "action": "permit",
+     "proto": "tcp",
+     "lo": 443,
+     "hi": 443
+    },
+    {
+     "action": "deny",
+     "proto": "ip",
+     "lo": null,
+     "hi": null
+    }
+   ],
+   "errors": [],
+   "validate": {
+    "errors": [],
+    "warns": [
+     "TCP/8443 est observé mais n’est plus autorisé : ce trafic sera bloqué.",
+     "ICMP est observé mais n’est plus autorisé : ce trafic sera bloqué."
+    ],
+    "infos": []
+   },
+   "allows": {
+    "TCP/8443": false,
+    "ICMP": false
+   }
+  },
+  {
+   "name": "first match wins",
+   "text": "deny tcp dst eq 22\npermit tcp\ndeny ip",
+   "observed": [
+    "TCP/22",
+    "TCP/80"
+   ],
+   "rules": [
+    {
+     "action": "deny",
+     "proto": "tcp",
+     "lo": 22,
+     "hi": 22
+    },
+    {
+     "action": "permit",
+     "proto": "tcp",
+     "lo": null,
+     "hi": null
+    },
+    {
+     "action": "deny",
+     "proto": "ip",
+     "lo": null,
+     "hi": null
+    }
+   ],
+   "errors": [],
+   "validate": {
+    "errors": [],
+    "warns": [
+     "TCP/22 est observé mais n’est plus autorisé : ce trafic sera bloqué."
+    ],
+    "infos": []
+   },
+   "allows": {
+    "TCP/22": false,
+    "TCP/80": true,
+    "UDP/53": false
+   }
+  },
+  {
+   "name": "range partially covered",
+   "text": "permit udp dst range 5000 5050\ndeny ip",
+   "observed": [
+    "UDP/5000-5100"
+   ],
+   "rules": [
+    {
+     "action": "permit",
+     "proto": "udp",
+     "lo": 5000,
+     "hi": 5050
+    },
+    {
+     "action": "deny",
+     "proto": "ip",
+     "lo": null,
+     "hi": null
+    }
+   ],
+   "errors": [],
+   "validate": {
+    "errors": [],
+    "warns": [
+     "UDP/5000-5100 est observé mais n’est plus autorisé : ce trafic sera bloqué."
+    ],
+    "infos": []
+   },
+   "allows": {
+    "UDP/5000-5100": false,
+    "UDP/5000-5050": true,
+    "UDP/5025": true
+   }
+  },
+  {
+   "name": "unused permit and range overlap",
+   "text": "permit tcp dst range 8000 8100\npermit tcp dst eq 9000\npermit udp dst eq 53\ndeny ip",
+   "observed": [
+    "TCP/8080-8090"
+   ],
+   "rules": [
+    {
+     "action": "permit",
+     "proto": "tcp",
+     "lo": 8000,
+     "hi": 8100
+    },
+    {
+     "action": "permit",
+     "proto": "tcp",
+     "lo": 9000,
+     "hi": 9000
+    },
+    {
+     "action": "permit",
+     "proto": "udp",
+     "lo": 53,
+     "hi": 53
+    },
+    {
+     "action": "deny",
+     "proto": "ip",
+     "lo": null,
+     "hi": null
+    }
+   ],
+   "errors": [],
+   "validate": {
+    "errors": [],
+    "warns": [],
+    "infos": [
+     "TCP/9000 autorisé mais jamais observé sur cette paire.",
+     "UDP/53 autorisé mais jamais observé sur cette paire."
+    ]
+   },
+   "allows": {
+    "TCP/8080": true
+   }
+  },
+  {
+   "name": "no final deny ip",
+   "text": "permit tcp dst eq 443\ndeny tcp",
+   "observed": [
+    "TCP/443"
+   ],
+   "rules": [
+    {
+     "action": "permit",
+     "proto": "tcp",
+     "lo": 443,
+     "hi": 443
+    },
+    {
+     "action": "deny",
+     "proto": "tcp",
+     "lo": null,
+     "hi": null
+    }
+   ],
+   "errors": [],
+   "validate": {
+    "errors": [],
+    "warns": [],
+    "infos": [
+     "Pas de « deny ip » final : c’est la politique par défaut de la cellule ou de la matrice qui s’applique."
+    ]
+   },
+   "allows": {
+    "TCP/443": true,
+    "TCP/80": false
+   }
+  },
+  {
+   "name": "icmp rule",
+   "text": "permit icmp\ndeny ip",
+   "observed": [
+    "ICMP"
+   ],
+   "rules": [
+    {
+     "action": "permit",
+     "proto": "icmp",
+     "lo": null,
+     "hi": null
+    },
+    {
+     "action": "deny",
+     "proto": "ip",
+     "lo": null,
+     "hi": null
+    }
+   ],
+   "errors": [],
+   "validate": {
+    "errors": [],
+    "warns": [],
+    "infos": []
+   },
+   "allows": {
+    "ICMP": true,
+    "TCP/443": false
+   }
+  },
+  {
+   "name": "windows line endings",
+   "text": "permit tcp dst eq 443\r\ndeny ip\r\n",
+   "observed": [
+    "TCP/443"
+   ],
+   "rules": [
+    {
+     "action": "permit",
+     "proto": "tcp",
+     "lo": 443,
+     "hi": 443
+    },
+    {
+     "action": "deny",
+     "proto": "ip",
+     "lo": null,
+     "hi": null
+    }
+   ],
+   "errors": [],
+   "validate": {
+    "errors": [],
+    "warns": [],
+    "infos": []
+   },
+   "allows": {
+    "TCP/443": true
+   }
+  },
+  {
+   "name": "trailing log keyword only",
+   "text": "permit tcp dst eq 443 log log",
+   "observed": [],
+   "rules": [],
+   "errors": [
+    "Ligne 1 : « permit tcp dst eq 443 log log » n’est pas une ACE reconnue."
+   ],
+   "validate": {
+    "errors": [
+     "Ligne 1 : « permit tcp dst eq 443 log log » n’est pas une ACE reconnue."
+    ],
+    "warns": [],
+    "infos": []
+   },
+   "allows": {}
+  },
+  {
+   "name": "extra whitespace between tokens",
+   "text": "permit   tcp\tdst  eq   443\ndeny ip",
+   "observed": [
+    "TCP/443"
+   ],
+   "rules": [
+    {
+     "action": "permit",
+     "proto": "tcp",
+     "lo": 443,
+     "hi": 443
+    },
+    {
+     "action": "deny",
+     "proto": "ip",
+     "lo": null,
+     "hi": null
+    }
+   ],
+   "errors": [],
+   "validate": {
+    "errors": [],
+    "warns": [],
+    "infos": []
+   },
+   "allows": {
+    "TCP/443": true
+   }
+  }
+ ]
+}

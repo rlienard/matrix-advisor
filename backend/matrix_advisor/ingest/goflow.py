@@ -11,7 +11,7 @@ import ipaddress
 import json
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 PROTO_NUM = {1: "ICMP", 6: "TCP", 17: "UDP", 58: "ICMP"}
 
@@ -90,12 +90,12 @@ def _ts(rec: dict) -> datetime:
     for key in ("time_flow_end_ns", "time_received_ns", "time_flow_start_ns"):
         v = rec.get(key)
         if v:
-            return datetime.fromtimestamp(int(v) / 1e9, tz=timezone.utc).replace(tzinfo=None)
+            return datetime.fromtimestamp(int(v) / 1e9, tz=UTC).replace(tzinfo=None)
     for key in ("time_flow_end", "time_received", "time_flow_start"):  # GoFlow2 v1 (seconds)
         v = rec.get(key)
         if v:
-            return datetime.fromtimestamp(int(v), tz=timezone.utc).replace(tzinfo=None)
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+            return datetime.fromtimestamp(int(v), tz=UTC).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def _proto(v) -> str:

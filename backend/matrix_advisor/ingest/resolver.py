@@ -16,7 +16,6 @@ import threading
 
 from ..policy.matrix import INTERNET, UNKNOWN
 
-
 INTERNAL_NETS = [ipaddress.ip_network(n) for n in (
     "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16", "127.0.0.0/8",
     "fc00::/7", "fe80::/10", "::1/128",
