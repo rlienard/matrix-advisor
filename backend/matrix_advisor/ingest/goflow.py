@@ -3,6 +3,11 @@
 GoFlow2 is started with ``-format json -transport file -transport.file <path>`` and
 appends one JSON object per flow. This module tails that file, survives rotation and
 truncation, and turns records into oriented flows (client -> service port).
+
+When switches export the Cisco TrustSec source/destination group tags (NetFlow v9 fields
+34000/34001) and GoFlow2 runs with ``deploy/goflow2/mapping.yaml``, records carry
+``src_sgt``/``dst_sgt``. They are kept as tag values; names are resolved later from the
+ISE SGT table.
 """
 
 from __future__ import annotations
@@ -33,6 +38,8 @@ class Flow:
     proto: str
     bytes: int
     packets: int
+    src_tag: int | None = None
+    dst_tag: int | None = None
 
 
 class NDJSONTailer:
@@ -129,6 +136,15 @@ def orient(proto: str, sip: str, sport: int, dip: str, dport: int) -> tuple[str,
     return sip, sport, dip, dport
 
 
+def _tag(v) -> int | None:
+    """SGT value from a flow record; 0 (unknown) and out-of-range values count as absent."""
+    try:
+        tag = int(v)
+    except (TypeError, ValueError):
+        return None
+    return tag if 0 < tag < 65536 else None
+
+
 def parse_record(line: bytes) -> Flow | None:
     try:
         rec = json.loads(line)
@@ -142,12 +158,16 @@ def parse_record(line: bytes) -> Flow | None:
     dport = int(rec.get("dst_port", rec.get("DstPort", 0)) or 0)
     sampling = int(rec.get("sampling_rate") or 1) or 1
     c_ip, c_port, s_ip, s_port = orient(proto, src, sport, dst, dport)
+    src_tag, dst_tag = _tag(rec.get("src_sgt")), _tag(rec.get("dst_sgt"))
+    if (c_ip, c_port) != (src, sport):  # reply folded onto the request: the tags follow the addresses
+        src_tag, dst_tag = dst_tag, src_tag
     return Flow(
         ts=_ts(rec),
         exporter=str(rec.get("sampler_address") or rec.get("SamplerAddress") or ""),
         src_ip=c_ip, src_port=c_port, dst_ip=s_ip, dst_port=s_port, proto=proto,
         bytes=int(rec.get("bytes", rec.get("Bytes", 0)) or 0) * sampling,
         packets=int(rec.get("packets", rec.get("Packets", 0)) or 0) * sampling,
+        src_tag=src_tag, dst_tag=dst_tag,
     )
 
 

@@ -113,6 +113,9 @@ class CollectorConfig(BaseModel):
     retention_days: int = Field(30, ge=1, le=365)
     aggregation_seconds: int = Field(60, ge=5, le=3600)
     stale_after_seconds: int = Field(300, ge=30)
+    # auto: use the SGT exported in flow records (Cisco CTS fields) when ISE knows its value,
+    # resolve the IP address otherwise. ip: always resolve IP addresses.
+    sgt_source: Literal["auto", "ip"] = "auto"
 
 
 class ServerConfig(BaseModel):

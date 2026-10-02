@@ -18,8 +18,9 @@ SD-Access and Default-Deny without Tears**.
 ## What it does
 
 - **Learns the real traffic matrix.** Switches export NetFlow v9/IPFIX to GoFlow2. Each flow is
-  oriented (client → service port), resolved to source/destination SGTs (pxGrid sessions, SXP/static
-  bindings) and aggregated per SGT pair in DuckDB. Raw flows are archived to Parquet.
+  oriented (client → service port), attributed to source/destination SGTs (the group tags exported in
+  the flow record when switches send them, otherwise pxGrid sessions, SXP/static bindings) and
+  aggregated per SGT pair in DuckDB. Raw flows are archived to Parquet.
 - **Compares with the ISE matrix.** SGTs, SGACLs and egress matrix cells are read from ISE (ERS API)
   and re-read periodically and on pxGrid change notifications. ISE stays the source of truth.
 - **Proposes the smallest change.** For each SGT pair that default-deny would break, the engine:
@@ -197,8 +198,9 @@ MA_CONFIG=./dev/config.yaml matrix-advisor            # API on :8000
 
 # simulators
 cd simulators/ise_sim && uvicorn ise_sim:app --port 9060
-python simulators/flowgen/flowgen.py --collector 127.0.0.1:4739
-goflow2 -listen netflow://:4739 -format json -transport file -transport.file /tmp/goflow2.ndjson
+python simulators/flowgen/flowgen.py --collector 127.0.0.1:4739        # --sgt: export CTS group tags
+goflow2 -listen netflow://:4739 -format json -transport file -transport.file /tmp/goflow2.ndjson \
+  -mapping deploy/goflow2/mapping.yaml
 
 # frontend (proxies /api to :8000)
 cd frontend && npm install && npm run dev
@@ -209,8 +211,12 @@ cd frontend && npm install && npm run dev
 - **Staging matrix**: ISE's matrix workflow (staging/production) is not driven through the API yet;
   `write_mode: monitor` writes new cells in `MONITOR` status instead. Deploying (pushing) policy to
   network devices is left to the ISE administrator.
-- **SGT in flow records**: flows are attributed to SGTs by IP. Exporting the SGT inside flow records
-  (Cisco CTS fields) would remove the dependency on pxGrid sessions; planned through a GoFlow2 mapping.
+- **SGT in flow records**: when switches export the CTS source/destination group tags
+  (`collect cts source group-tag` / `collect cts destination group-tag` in the Flexible NetFlow
+  record), GoFlow2 maps them with `deploy/goflow2/mapping.yaml` and they take precedence over IP
+  resolution (`collector.sgt_source: auto`). Tag 0, or a value unknown to ISE, falls back to the IP
+  address. The field encoding (NetFlow v9 34000/34001, IPFIX enterprise 1232/1233 PEN 9) is checked
+  against the generator only, not yet against a switch.
 - **Rare flows**: impact analysis only knows traffic seen during the observation window. A monthly
   batch never observed will not be protected; cloning by default limits the blast radius.
 - **Single matrix**, IPv4 SGACL generation, one administrator account.

@@ -20,8 +20,8 @@ CONTEXT_WAIT_S = 180
 class IngestPipeline:
     def __init__(self, config: ConfigStore, store: Store, resolver: SGTResolver, ready=None):
         self.config = config
-        # Callable telling whether endpoint context (pxGrid) is loaded. Until then flows stay in
-        # the GoFlow2 file, so that they are not attributed to "Unknown" for good.
+        # Callable telling whether the ISE SGT table and endpoint context (pxGrid) are loaded. Until
+        # then flows stay in the GoFlow2 file, so that they are not attributed to "Unknown" for good.
         self.ready = ready or (lambda: True)
         self._started = time.monotonic()
         self.store = store
@@ -31,7 +31,7 @@ class IngestPipeline:
         self._last_flush = time.monotonic()
         self._last_rollup = 0.0
         self._last_retention = 0.0
-        self.stats = {"records": 0, "dropped_exporter": 0, "malformed": 0}
+        self.stats = {"records": 0, "dropped_exporter": 0, "malformed": 0, "sgt_from_flow": 0, "unknown_tag": 0}
         config.on_change(lambda old, new: self._reset())
         self._reset()
 
@@ -46,6 +46,7 @@ class IngestPipeline:
         if not self.ready() and time.monotonic() - self._started < CONTEXT_WAIT_S:
             return 0
         lines = self._tailer.read()
+        use_tags = self.config.settings.collector.sgt_source == "auto"
         rows = []
         for line in lines:
             flow = parse_record(line)
@@ -55,15 +56,26 @@ class IngestPipeline:
             if not self._filter.allowed(flow.exporter):
                 self.stats["dropped_exporter"] += 1
                 continue
+            src_sgt = self._sgt(flow.src_tag, flow.src_ip, use_tags)
+            dst_sgt = self._sgt(flow.dst_tag, flow.dst_ip, use_tags)
             rows.append((
                 flow.ts.strftime("%Y-%m-%d %H:%M:%S.%f"), flow.exporter, flow.src_ip, flow.src_port,
-                flow.dst_ip, flow.dst_port, flow.proto, flow.bytes, flow.packets,
-                self.resolver.resolve(flow.src_ip), self.resolver.resolve(flow.dst_ip),
+                flow.dst_ip, flow.dst_port, flow.proto, flow.bytes, flow.packets, src_sgt, dst_sgt,
             ))
         n = self.store.ingest(rows)
         self.stats["records"] += n
         self._housekeeping()
         return n
+
+    def _sgt(self, tag: int | None, ip: str, use_tags: bool) -> str:
+        """SGT name of one side of a flow: the exported tag when ISE knows it, else the IP resolver."""
+        if use_tags and tag is not None:
+            name = self.resolver.tag_name(tag)
+            if name:
+                self.stats["sgt_from_flow"] += 1
+                return name
+            self.stats["unknown_tag"] += 1
+        return self.resolver.resolve(ip)
 
     def _housekeeping(self) -> None:
         c = self.config.settings.collector

@@ -11,10 +11,15 @@
      request direction (client → service port) using a port score: well-known ports, known service
      ports, registered, ephemeral. A reply from a web server is therefore not mistaken for traffic
      from the server group to the client group.
-   - *SGT resolution*: pxGrid session (exact IP) > SXP/IP-SGT binding (prefix) > static binding
-     from the configuration > `Internet` (public address) or `Unknown` (private address).
-     Ingestion waits (up to 3 minutes) for the first pxGrid context so that early flows are not
-     attributed to `Unknown` for good.
+   - *SGT attribution*: the group tag exported in the flow record (`src_sgt`/`dst_sgt`, Cisco CTS
+     fields mapped by `deploy/goflow2/mapping.yaml`) when its value is in the ISE SGT table and
+     `collector.sgt_source` is `auto`; otherwise IP resolution: pxGrid session (exact IP) >
+     SXP/IP-SGT binding (prefix) > static binding from the configuration > `Internet` (public
+     address) or `Unknown` (private address). Tags are swapped together with the addresses when a
+     reply is folded onto its request. Ingestion waits (up to 3 minutes) for the ISE SGT table and
+     the first pxGrid context so that early flows are not attributed to `Unknown` for good.
+     `/api/status` counts flow sides attributed from tags (`sgt_from_flow`) and unknown tag values
+     (`unknown_tag`).
 3. **Storage** (`matrix_advisor/store.py`, DuckDB).
    - `flow_minutes`: per-minute aggregates per (SGT pair, protocol, port, source IP, destination IP),
      7 days. Used for host counts and timing behaviour.

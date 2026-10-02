@@ -8,7 +8,11 @@ SGT. Scenarios include the cases the demo talks about: a new port on an existing
 contract, a reusable contract, SQL access from a handful of contractor laptops, and
 cameras beaconing to the Internet every 5 minutes.
 
-    python flowgen.py --collector 127.0.0.1:4739 [--speed 1] [--once]
+With ``--sgt`` the records also carry the Cisco TrustSec source/destination group tags
+(enterprise elements 34000/34001, PEN 9), as a switch with "collect cts source group-tag"
+would export them; values match the ISE simulator's SGT table.
+
+    python flowgen.py --collector 127.0.0.1:4739 [--speed 1] [--once] [--sgt]
 
 No third-party dependency.
 """
@@ -27,7 +31,14 @@ TEMPLATE_ID = 256
 # (IANA element id, length)
 FIELDS = [(8, 4), (12, 4), (7, 2), (11, 2), (4, 1), (1, 8), (2, 8), (152, 8), (153, 8)]
 RECORD = struct.Struct("!4s4sHHBQQQQ")
+# Cisco CTS source / destination group tag: enterprise bit set in the id, followed by PEN 9.
+CISCO_PEN = 9
+SGT_FIELDS = [(34000, 2), (34001, 2)]
+SGT_TAGS = struct.Struct("!HH")
 PROTO = {"TCP": 6, "UDP": 17}
+# SGT values of the ISE simulator, by source subnet (10.10.x.0/24) and server subnet (10.20.x.0/24).
+CLIENT_TAGS = {1: 4, 2: 5, 3: 6, 4: 7, 5: 8}
+SERVER_TAGS = {1: 10, 2: 11, 3: 12, 4: 13, 5: 14}
 
 
 @dataclass
@@ -58,18 +69,36 @@ PROFILES = [
 ]
 
 
+def template_set(sgt: bool = False) -> bytes:
+    fields = [struct.pack("!HH", i, ln) for i, ln in FIELDS]
+    if sgt:
+        fields += [struct.pack("!HHI", i, ln, CISCO_PEN) for i, ln in SGT_FIELDS]
+    body = struct.pack("!HH", TEMPLATE_ID, len(fields)) + b"".join(fields)
+    return struct.pack("!HH", 2, 4 + len(body)) + body
+
+
+def tag_of(ip: str) -> int:
+    """SGT the switch would have assigned to this address (0 = unknown, e.g. the Internet)."""
+    a, b, c, _ = (int(x) for x in ip.split("."))
+    if (a, b) == (10, 10):
+        return CLIENT_TAGS.get(c, 0)
+    if (a, b) == (10, 20):
+        return SERVER_TAGS.get(c, 0)
+    return 0
+
+
 class Exporter:
-    def __init__(self, collector: str, domain: int = 1):
+    def __init__(self, collector: str, domain: int = 1, sgt: bool = False):
         host, port = collector.rsplit(":", 1)
         self.addr = (host, int(port))
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.domain = domain
+        self.sgt = sgt
         self.seq = 0
         self.messages = 0
 
     def _template_set(self) -> bytes:
-        body = struct.pack("!HH", TEMPLATE_ID, len(FIELDS)) + b"".join(struct.pack("!HH", i, ln) for i, ln in FIELDS)
-        return struct.pack("!HH", 2, 4 + len(body)) + body
+        return template_set(self.sgt)
 
     def send(self, records: list[bytes]) -> None:
         for i in range(0, len(records), 25):
@@ -77,6 +106,9 @@ class Exporter:
             # Template in every message: collectors decode in parallel workers and
             # would otherwise drop data sets that arrive before the template.
             sets = self._template_set()
+            if self.sgt:
+                chunk = [r + SGT_TAGS.pack(tag_of(socket.inet_ntoa(r[0:4])), tag_of(socket.inet_ntoa(r[4:8])))
+                         for r in chunk]
             data = b"".join(chunk)
             sets += struct.pack("!HH", TEMPLATE_ID, 4 + len(data)) + data
             header = struct.pack("!HHIII", 10, 16 + len(sets), int(time.time()), self.seq, self.domain)
@@ -143,12 +175,14 @@ def main() -> None:
     ap.add_argument("--only", default="", help="comma-separated profile names to run")
     ap.add_argument("--once", action="store_true", help="send one round and exit")
     ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument("--sgt", action="store_true", help="export Cisco CTS source/destination group tags")
     args = ap.parse_args()
 
     rng = random.Random(args.seed)
     profiles = [p for p in PROFILES if not args.only or p.name in args.only.split(",")]
-    exporter = Exporter(args.collector)
-    print(f"flowgen -> {args.collector}: {', '.join(p.name for p in profiles)}", flush=True)
+    exporter = Exporter(args.collector, sgt=args.sgt)
+    tags = " (with SGT)" if args.sgt else ""
+    print(f"flowgen -> {args.collector}{tags}: {', '.join(p.name for p in profiles)}", flush=True)
     while True:
         records: list[bytes] = []
         for p in profiles:

@@ -48,6 +48,7 @@ collector:
   retention_days: 30
   aggregation_seconds: 60
   stale_after_seconds: 300
+  sgt_source: auto              # auto: SGT exported in flow records when present, else IP; ip: IP only
 
 server:
   admin_password: ${MA_ADMIN_PASSWORD}
