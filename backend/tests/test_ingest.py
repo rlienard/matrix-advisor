@@ -5,7 +5,7 @@ import pytest
 
 from matrix_advisor.agent.llm import PrivacyViolation, assert_no_ip
 from matrix_advisor.config import ConfigStore
-from matrix_advisor.ingest.goflow import ExporterFilter, NDJSONTailer, orient, parse_record
+from matrix_advisor.ingest.goflow import ExporterFilter, NDJSONTailer, decode_records, orient, parse_record
 from matrix_advisor.ingest.pipeline import IngestPipeline
 from matrix_advisor.ingest.resolver import SGTResolver
 
@@ -25,6 +25,16 @@ def test_parse_goflow2_v2_record():
     assert (f.src_ip, f.dst_ip, f.dst_port, f.proto, f.bytes) == ("10.10.1.7", "10.20.1.5", 443, "TCP", 100)
     assert parse_record(b"not json") is None
     assert parse_record(json.dumps({**rec, "proto": 17}).encode()).proto == "UDP"
+
+
+def test_decode_records_splits_concatenated_lines():
+    assert decode_records(b'{"a":1}') == ([{"a": 1}], 0)
+    # GoFlow2's file transport sometimes writes two records with no newline between them.
+    assert decode_records(b'{"a":1}{"b":2} {"c":3}') == ([{"a": 1}, {"b": 2}, {"c": 3}], 0)
+    # Records before an unparsable tail are kept; the tail counts as malformed.
+    assert decode_records(b'{"a":1}{"b":') == ([{"a": 1}], 1)
+    assert decode_records(b"not json") == ([], 1)
+    assert decode_records(b"\xff{}") == ([], 1)
 
 
 def test_tailer_handles_partial_lines_and_truncation(tmp_path):
@@ -147,3 +157,19 @@ def test_pipeline_ignores_tags_when_sgt_source_is_ip(tmp_path):
     pipeline, rows = _pipeline(tmp_path, "ip")
     assert rows[0][1] == "Contractors"
     assert (pipeline.stats["sgt_from_flow"], pipeline.stats["unknown_tag"]) == (0, 0)
+
+
+def test_pipeline_keeps_flows_from_concatenated_lines(tmp_path):
+    flows = tmp_path / "flows.ndjson"
+    base = {"type": "IPFIX", "time_flow_end_ns": 1_790_000_000_000_000_000, "sampler_address": "10.0.0.1",
+            "proto": "TCP", "src_port": 51000, "dst_port": 443, "bytes": 100, "packets": 2,
+            "dst_addr": "10.20.1.5"}
+    a, b, c = ({**base, "src_addr": f"10.10.1.{i}"} for i in (7, 8, 9))
+    flows.write_text(json.dumps(a) + json.dumps(b) + "\n" + json.dumps(c) + "{\"broken\n" + "[1]\n")
+    (tmp_path / "config.yaml").write_text(f"collector: {{input_file: {flows}, allowed_exporters: []}}\n")
+    store = _Store()
+    pipeline = IngestPipeline(ConfigStore(tmp_path / "config.yaml"), store, SGTResolver())
+    assert pipeline.tick() == 3
+    assert [r[2] for r in store.rows] == ["10.10.1.7", "10.10.1.8", "10.10.1.9"]
+    assert pipeline.stats["concatenated_lines"] == 1
+    assert pipeline.stats["malformed"] == 2  # the broken tail and the non-object record

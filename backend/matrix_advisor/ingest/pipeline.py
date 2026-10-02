@@ -8,7 +8,7 @@ import time
 
 from ..config import ConfigStore
 from ..store import Store
-from .goflow import ExporterFilter, NDJSONTailer, parse_record
+from .goflow import ExporterFilter, NDJSONTailer, decode_records, flow_from_record
 from .resolver import SGTResolver
 
 log = logging.getLogger(__name__)
@@ -31,7 +31,10 @@ class IngestPipeline:
         self._last_flush = time.monotonic()
         self._last_rollup = 0.0
         self._last_retention = 0.0
-        self.stats = {"records": 0, "dropped_exporter": 0, "malformed": 0, "sgt_from_flow": 0, "unknown_tag": 0}
+        self.stats = {
+            "records": 0, "dropped_exporter": 0, "malformed": 0, "concatenated_lines": 0,
+            "sgt_from_flow": 0, "unknown_tag": 0,
+        }
         config.on_change(lambda old, new: self._reset())
         self._reset()
 
@@ -49,19 +52,24 @@ class IngestPipeline:
         use_tags = self.config.settings.collector.sgt_source == "auto"
         rows = []
         for line in lines:
-            flow = parse_record(line)
-            if flow is None:
-                self.stats["malformed"] += 1
-                continue
-            if not self._filter.allowed(flow.exporter):
-                self.stats["dropped_exporter"] += 1
-                continue
-            src_sgt = self._sgt(flow.src_tag, flow.src_ip, use_tags)
-            dst_sgt = self._sgt(flow.dst_tag, flow.dst_ip, use_tags)
-            rows.append((
-                flow.ts.strftime("%Y-%m-%d %H:%M:%S.%f"), flow.exporter, flow.src_ip, flow.src_port,
-                flow.dst_ip, flow.dst_port, flow.proto, flow.bytes, flow.packets, src_sgt, dst_sgt,
-            ))
+            records, bad = decode_records(line)
+            self.stats["malformed"] += bad
+            if len(records) > 1:
+                self.stats["concatenated_lines"] += 1
+            for rec in records:
+                flow = flow_from_record(rec)
+                if flow is None:
+                    self.stats["malformed"] += 1
+                    continue
+                if not self._filter.allowed(flow.exporter):
+                    self.stats["dropped_exporter"] += 1
+                    continue
+                src_sgt = self._sgt(flow.src_tag, flow.src_ip, use_tags)
+                dst_sgt = self._sgt(flow.dst_tag, flow.dst_ip, use_tags)
+                rows.append((
+                    flow.ts.strftime("%Y-%m-%d %H:%M:%S.%f"), flow.exporter, flow.src_ip, flow.src_port,
+                    flow.dst_ip, flow.dst_port, flow.proto, flow.bytes, flow.packets, src_sgt, dst_sgt,
+                ))
         n = self.store.ingest(rows)
         self.stats["records"] += n
         self._housekeeping()
