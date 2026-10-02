@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "matrix-advisor"
+version = "0.1.0"
+description = "AI-assisted TrustSec matrix builder for SD-Access default-deny, driven by NetFlow/IPFIX and Cisco ISE"
+readme = "../README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "pydantic>=2.7",
+  "pyyaml>=6.0",
+  "duckdb>=1.1",
+  "httpx>=0.27",
+  "websockets>=12",
+  "itsdangerous>=2.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5"]
+
+[project.scripts]
+matrix-advisor = "matrix_advisor.main:run"
+
+[tool.setuptools.packages.find]
+include = ["matrix_advisor*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
