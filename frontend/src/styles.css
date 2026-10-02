@@ -119,7 +119,7 @@ label.field-label { font-size: 12px; font-weight: 600; color: var(--text-2); }
 
 .port { font-family: var(--mono); font-size: 12px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--control-border); }
 .port.new { border: 1px dashed var(--pend); background: #2e2416; color: var(--warn-fg); }
-.stat-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 8px; }
 .stat { padding: 10px; border-radius: 8px; background: var(--raised); display: flex; flex-direction: column; gap: 2px; }
 .stat span:first-child { font-size: 11px; color: var(--text-3); }
 .stat span:last-child { font-size: 16px; font-weight: 600; }

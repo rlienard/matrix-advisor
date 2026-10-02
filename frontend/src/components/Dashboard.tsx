@@ -57,6 +57,7 @@ export default function Dashboard({ status }: { status: Status | null }) {
   const k = data?.kpi;
   const byKind = k?.pending_by_kind ?? {};
   const learning = data?.learning ?? status?.learning;
+  const observation = data?.observation ?? status?.observation;
 
   return (
     <>
@@ -65,6 +66,13 @@ export default function Dashboard({ status }: { status: Status | null }) {
         <div className="banner">
           Phase d’apprentissage : l’agent observe sans rien proposer
           {learning.ends_at ? ` jusqu’au ${new Date(learning.ends_at + "Z").toLocaleString("fr-FR")}` : " (en attente des premiers flux)"}.
+        </div>
+      )}
+      {!learning?.active && observation && observation.days > 0 && !observation.sufficient && (
+        <div className="banner">
+          {observation.retention_days < observation.recommended_days
+            ? `Rétention de ${observation.retention_days} jours : un traitement mensuel peut sortir de l’historique avant d’avoir été revu. Passez la rétention à ${observation.recommended_days} jours au moins avant la bascule en default-deny.`
+            : `${observation.days} jour(s) d’observation sur les ${observation.recommended_days} recommandés : un traitement mensuel peut ne pas encore avoir été vu. Attendez avant la bascule en default-deny.`}
         </div>
       )}
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", gap: 12 }}>

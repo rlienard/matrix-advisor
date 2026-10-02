@@ -12,7 +12,6 @@ Safety rules implemented here:
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
 
 from ..config import ConfigStore
 from ..ise.client import ISEError
@@ -70,7 +69,8 @@ class Actions:
         others = [k for k in m.contract_users(base.id) if k != pair] if base else []
         impacts: list[dict] = []
         if changes_base:
-            observed = self.advisor.observed_ports(utcnow() - timedelta(days=7))
+            # Whole retained history: a monthly job of another pair must also block an in-place change.
+            observed = self.advisor.observed_ports(utcnow() - self.advisor.analysis_window())
             impacts = impact_of_change(m, base.id, _norm(final), observed, exclude=pair)
         names = {a.name for a in m.sgacls.values()}
         prefix = self.config.settings.ise.sgacl_prefix

@@ -28,6 +28,8 @@ export interface Link {
   contracts: Contract[];
   monitor: boolean;
   first_seen: string | null;
+  activity: Activity;
+  rare: boolean;
   ports: PortStat[];
   blocked_flows: number;
   proposal_id: string | null;
@@ -52,6 +54,22 @@ export interface Dashboard {
   };
   trend: { ts: string; uncovered: number }[];
   learning: Learning;
+  observation: Observation;
+}
+
+// Days with traffic for one pair, out of the days of history in the window.
+export interface Activity {
+  days_seen: number;
+  observed_days: number;
+  last_seen_days_ago: number | null;
+}
+
+// Whether the history is long enough for monthly jobs to have been seen before default-deny.
+export interface Observation {
+  days: number;
+  recommended_days: number;
+  retention_days: number;
+  sufficient: boolean;
 }
 
 export interface Learning {
@@ -116,6 +134,7 @@ export interface Status {
   };
   llm: { online: boolean | null; provider: string; model: string; cloud: boolean; error: string | null };
   learning: Learning;
+  observation: Observation;
   write_mode: "monitor" | "enforce";
   prefix: string;
 }

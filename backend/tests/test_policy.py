@@ -1,3 +1,4 @@
+from matrix_advisor.agent import risk
 from matrix_advisor.policy import acl
 from matrix_advisor.policy.impact import clone_name, impact_of_change
 from matrix_advisor.policy.matrix import Cell, Matrix, Sgacl, Sgt
@@ -65,3 +66,15 @@ def test_impact_and_clone_name():
                             observed) == []
     assert clone_name("MA_", "Web_Access", "Contractors", set()) == "MA_Web_Access_Contractors"
     assert clone_name("MA_", "MA_X", "C", {"MA_X_C"}) == "MA_X_C_2"
+
+
+def test_rare_flow_heuristic():
+    base = {"src": "Contractors", "dst": "HR_Servers", "ports": [{"spec": "TCP/443", "flows": 3, "hosts": 1}],
+            "source_hosts": 4, "behaviour": {}}
+    assert not risk.is_rare({"days_seen": 1, "observed_days": 6})  # too little history to judge
+    assert not risk.is_rare({"days_seen": 3, "observed_days": 30})
+    assert not risk.is_rare({"days_seen": 0, "observed_days": 30})
+    a = risk.assess({**base, "activity": {"days_seen": 1, "observed_days": 30, "last_seen_days_ago": 12}})
+    assert (a["risk"], a["recommendation"]) == ("medium", "review")
+    assert "vu 1 jour(s) sur 30" in a["reasons"][0] and "il y a 12 jour(s)" in a["reasons"][0]
+    assert risk.assess({**base, "activity": {"days_seen": 9, "observed_days": 30}})["risk"] == "low"

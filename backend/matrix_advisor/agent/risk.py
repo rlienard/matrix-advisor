@@ -8,6 +8,18 @@ from __future__ import annotations
 from ..policy import acl
 from ..policy.matrix import INTERNET, UNKNOWN
 
+# A pair seen on at most RARE_MAX_DAYS distinct days, out of at least RARE_MIN_WINDOW days of
+# observation, is "rare": possibly a periodic job (monthly batch) whose ports were not all observed.
+RARE_MAX_DAYS = 2
+RARE_MIN_WINDOW = 7
+# Observation needed before default-deny so that monthly jobs have run at least once.
+MONTHLY_CYCLE_DAYS = 30
+
+
+def is_rare(activity: dict | None) -> bool:
+    a = activity or {}
+    return a.get("observed_days", 0) >= RARE_MIN_WINDOW and 0 < a.get("days_seen", 0) <= RARE_MAX_DAYS
+
 
 def assess(features: dict) -> dict:
     """Return {risk, recommendation, reasons[]} from pair features (no IP addresses)."""
@@ -46,6 +58,15 @@ def assess(features: dict) -> dict:
     if len(ports) > 8:
         bump("medium")
         reasons.append(f"{len(ports)} ports distincts : vérifier qu’il ne s’agit pas d’un scan")
+    act = features.get("activity") or {}
+    if is_rare(act):
+        bump("medium")
+        last = act.get("last_seen_days_ago")
+        since = f", dernier flux il y a {last} jour(s)" if last else ""
+        reasons.append(
+            f"trafic rare : vu {act['days_seen']} jour(s) sur {act['observed_days']} jours d’observation{since} ; "
+            "vérifier qu’il s’agit d’un besoin récurrent (traitement mensuel ?) et que tous ses ports ont été vus"
+        )
     if features["src"] == UNKNOWN or features["dst"] == UNKNOWN:
         bump("medium")
         reasons.append("adresses sans SGT : vérifier l’affectation des endpoints dans ISE")

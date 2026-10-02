@@ -183,6 +183,11 @@ export default function PairPanel({ link, onClose, onChanged }: Props) {
               {p?.status === "approved" ? "Approuvé" : statusChip.label}{link.monitor ? " · monitor" : ""}
             </span>
             {p && <span className={`chip ${RISK[p.risk].cls}`}>{RISK[p.risk].label}</span>}
+            {link.rare && (
+              <span className="chip warn" title="Peu de jours d’activité : traitement périodique possible, dont tous les ports n’ont peut-être pas été vus">
+                Flux rare
+              </span>
+            )}
             {isEdited && <span className="chip info">Modifié par l’admin</span>}
             {p && !p.llm_used && pending && <span className="chip grey" title="Le modèle n’a pas répondu : analyse heuristique">Heuristique</span>}
           </div>
@@ -196,6 +201,9 @@ export default function PairPanel({ link, onClose, onChanged }: Props) {
         <div className="stat"><span>Flux</span><span>{fmt(link.flows)}</span></div>
         <div className="stat"><span>Hôtes source</span><span>{fmt(link.hosts)}</span></div>
         <div className="stat"><span>Vu depuis</span><span>{shortDate(link.first_seen)}</span></div>
+        <div className="stat" title={link.activity.last_seen_days_ago ? `Dernier flux il y a ${link.activity.last_seen_days_ago} jour(s)` : undefined}>
+          <span>Jours d’activité</span><span>{link.activity.days_seen} / {link.activity.observed_days}</span>
+        </div>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
