@@ -120,6 +120,13 @@ MA_CONFIG_TEMPLATE=/app/deploy/config.demo.yaml docker compose --profile demo --
 - SGT in flow records: `deploy/goflow2/mapping.yaml` assumes NetFlow v9 fields 34000/34001 and IPFIX
   enterprise elements 1232/1233 with PEN 9 (verified with flowgen `--sgt` + GoFlow2 2.2.7 only): capture
   a real switch export to confirm.
+- Planned (validated in the UI mockup, not implemented yet): ISE settings split into Cluster / pxGrid / Advanced
+  tabs; automatic cluster scan once PAN + ERS credentials are set (pxGrid nodes in dropdowns, optional secondary
+  node); pxGrid client certificate either generated self-signed or uploaded from the UI; optional import of the
+  generated public certificate into the ISE trusted store via `POST /api/v1/certs/trusted-certificate/import`
+  (needs `trustForClientAuth` and `allowBasicConstraintCAFalse`; field names, required admin role and response to
+  check in the ISE Swagger). That import is an explicit, audited write, never silent. pxGrid client approval stays
+  manual unless auto-approve is enabled in ISE.
 - Docker images and the Lima script have not been built/run yet; check arm64 availability of
   `netsampler/goflow2` on Apple Silicon.
 - Roadmap: multiple matrices.
