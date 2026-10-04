@@ -7,35 +7,40 @@ ui:
 
 llm:
   provider: ollama              # ollama | openai (vLLM, LM Studio…) | anthropic | azure
-  endpoint: http://ollama:11434
+  location: remote              # ollama/openai only. local: same machine, only the port is used
+  port: 11434                   #   (host found automatically in a container, MA_LLM_LOCAL_HOST overrides)
+  endpoint: http://ollama:11434 # remote instances and cloud providers
   model: qwen2.5:14b
   api_key: ${MA_LLM_API_KEY}
-  temperature: 0.1
   timeout_s: 60
   trigger: event                # event: analyse as soon as a new SGT pair appears
   learning_days: 14             # observe silently before proposing anything
 
 ise:
   pan: ise-pan.example.local
+  verify_tls: true              # ERS/OpenAPI and pxGrid
+  ca_cert: /certs/ise-ca.pem    # ISE chain; empty: system store
   openapi:
     username: matrix-advisor
     password: ${MA_ISE_PASSWORD}
     port: 443
-    verify_tls: true
-    ca_cert: /certs/ise-ca.pem
   pxgrid:
     node: ise-px1.example.local
+    secondary_node: ""          # used when the primary node stops answering
     client_name: matrix-advisor
     auth: certificate           # certificate | password
+    cert_mode: generate         # generate (self-signed, from the UI) | upload
+    import_to_ise_trust: true   # import the generated certificate into the ISE trusted store (audited)
     client_cert: /certs/pxgrid-client.pem
     client_key: /certs/pxgrid-client.key
-    ca_cert: /certs/ise-ca.pem
+    client_key_password: ${MA_PXGRID_KEY_PASSWORD}
     password: ${MA_PXGRID_PASSWORD}
     subscribe: true
   write_mode: monitor           # monitor: new cells written as MONITOR; enforce: ENABLED
   sgacl_prefix: MA_
   reconcile_minutes: 15
   matrix_default: deny          # used to compute what default-deny would block
+  egress_firewall: true         # a firewall filters LAN -> Internet: contracts towards Unknown (SGT 0) stay permissive
   static_bindings: {}           # extra CIDR -> SGT name mappings, e.g. {"10.50.0.0/16": "Printers"}
 
 collector:

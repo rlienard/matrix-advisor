@@ -8,10 +8,10 @@ from datetime import datetime
 
 from . import acl
 
-# Pseudo groups produced by the IP -> SGT resolver. They have no cell in the matrix.
+# SGT 0: what the switches enforce for an address with no classification (Internet destinations,
+# unmapped hosts). ISE has it in its SGT table as "Unknown"; the matrix can hold cells for it.
 UNKNOWN = "Unknown"
-INTERNET = "Internet"
-PSEUDO_GROUPS = {UNKNOWN, INTERNET}
+UNKNOWN_VALUE = 0
 
 
 @dataclass
@@ -73,6 +73,18 @@ class Matrix:
     def sgacl_by_name(self, name: str) -> Sgacl | None:
         return next((a for a in self.sgacls.values() if a.name == name), None)
 
+    @property
+    def unknown_name(self) -> str:
+        """Name of SGT 0 in ISE ("Unknown" by default)."""
+        s = self.sgt_by_value(UNKNOWN_VALUE)
+        return s.name if s else UNKNOWN
+
+    def permit_ip(self) -> Sgacl | None:
+        """The SGACL that permits everything (ISE built-in "Permit IP"), if any."""
+        hits = [a for a in self.sgacls.values() if acl.to_ise(a.content) == "permit ip"]
+        hits.sort(key=lambda a: (not a.read_only, "log" in a.name.lower(), a.name))
+        return hits[0] if hits else None
+
     def cell(self, src: str, dst: str) -> Cell | None:
         c = self.cells.get((src, dst))
         if c is None or c.status == "DISABLED":
@@ -100,8 +112,6 @@ class Matrix:
         ``override`` maps an SGACL id to a replacement content (used for impact analysis).
         Monitor cells count as permitted (they log instead of dropping).
         """
-        if src in PSEUDO_GROUPS or dst in PSEUDO_GROUPS:
-            return self.default == "permit"
         c = self.cell(src, dst)
         if c is None:
             return self.default == "permit"

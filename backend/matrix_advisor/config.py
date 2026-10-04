@@ -25,6 +25,7 @@ SECRET_FIELDS: dict[str, str] = {
     "llm.api_key": "MA_LLM_API_KEY",
     "ise.openapi.password": "MA_ISE_PASSWORD",
     "ise.pxgrid.password": "MA_PXGRID_PASSWORD",
+    "ise.pxgrid.client_key_password": "MA_PXGRID_KEY_PASSWORD",
     "server.admin_password": "MA_ADMIN_PASSWORD",
     "server.session_secret": "MA_SESSION_SECRET",
 }
@@ -34,11 +35,16 @@ _ENV_RE = re.compile(r"\$\{([A-Z0-9_]+)\}")
 
 class LLMConfig(BaseModel):
     provider: Literal["ollama", "openai", "anthropic", "azure"] = "ollama"
+    # Ollama and vLLM only. local: the server runs on the same machine as Matrix Advisor and only
+    # the port is configured (the host is found automatically when Matrix Advisor runs in a
+    # container, see agent.llm.effective_endpoint). remote: the endpoint URL is used as is.
+    location: Literal["local", "remote"] = "remote"
+    port: int = Field(11434, ge=1, le=65535)
     endpoint: str = "http://ollama:11434"
     model: str = "qwen2.5:14b"
     api_key: str = ""
     api_version: str = "2024-06-01"  # Azure OpenAI only
-    temperature: float = Field(0.1, ge=0, le=2)
+    temperature: float = Field(0.1, ge=0, le=2)  # not shown in the UI: low on purpose
     timeout_s: int = Field(60, ge=1, le=600)
     trigger: Literal["event", "scheduled"] = "event"
     scheduled_minutes: int = Field(60, ge=5, le=1440)
@@ -50,6 +56,10 @@ class LLMConfig(BaseModel):
     def is_cloud(self) -> bool:
         return self.provider in ("anthropic", "azure")
 
+    @property
+    def is_local(self) -> bool:
+        return self.provider in ("ollama", "openai") and self.location == "local"
+
 
 class OpenAPIConfig(BaseModel):
     # Override for labs and the simulator, e.g. "http://ise-sim:9060". Default: https://<pan>:<port>
@@ -57,28 +67,37 @@ class OpenAPIConfig(BaseModel):
     username: str = "matrix-advisor"
     password: str = ""
     port: int = 443
-    verify_tls: bool = True
-    ca_cert: str = ""
 
 
 class PxGridConfig(BaseModel):
     node: str = ""
+    secondary_node: str = ""  # used when the primary node stops answering
     # Override for labs and the simulator. Default: https://<node>:<port>
     base_url: str = ""
     client_name: str = "matrix-advisor"
     auth: Literal["certificate", "password"] = "certificate"
+    # generate: self-signed certificate made by Matrix Advisor (POST /api/ise/pxgrid/certificate);
+    # upload: certificate and key uploaded from the UI. Both end up as files under <data>/certs.
+    cert_mode: Literal["generate", "upload"] = "generate"
+    cert_cn: str = ""  # default: client_name
+    cert_days: int = Field(730, ge=1, le=3650)
+    # Import the generated public certificate into the ISE trusted store (explicit, audited write).
+    import_to_ise_trust: bool = True
     client_cert: str = ""
     client_key: str = ""
-    ca_cert: str = ""
+    client_key_password: str = ""
     password: str = ""
     port: int = 8910
-    verify_tls: bool = True
     subscribe: bool = True  # websocket subscription; falls back to polling
     poll_seconds: int = Field(60, ge=10, le=3600)
 
 
 class ISEConfig(BaseModel):
     pan: str = "ise-pan.lab.local"
+    # TLS towards ISE, for ERS/OpenAPI and pxGrid alike: verify against ca_cert (the ISE chain),
+    # or the system store when it is empty.
+    verify_tls: bool = True
+    ca_cert: str = ""
     openapi: OpenAPIConfig = OpenAPIConfig()
     pxgrid: PxGridConfig = PxGridConfig()
     # monitor: approved cells are written with status MONITOR (logged, not enforced)
@@ -88,6 +107,9 @@ class ISEConfig(BaseModel):
     reconcile_minutes: int = Field(15, ge=1, le=1440)
     # What the matrix does for a pair with no cell. Default-deny is the target state.
     matrix_default: Literal["deny", "permit"] = "deny"
+    # A firewall filters traffic between the LAN and the Internet: proposed contracts towards
+    # Unknown (SGT 0, mostly Internet-bound traffic) are permissive. Off: least privilege as well.
+    egress_firewall: bool = True
     # Static IP -> SGT bindings (CIDR -> SGT name), merged with pxGrid sessions.
     static_bindings: dict[str, str] = {}
 
@@ -195,6 +217,7 @@ class ConfigStore:
         old = (data.get("llm") or {}).pop("language", None)
         if old in ("fr", "en") and not (data.get("ui") or {}).get("language"):
             data.setdefault("ui", {})["language"] = old
+        _migrate_ise_tls(data)
         stored = self._read_secrets()
         for dotted, env in SECRET_FIELDS.items():
             if os.environ.get(env):
@@ -282,6 +305,27 @@ class ConfigStore:
             secrets[dotted] = value
             self._write_secrets(secrets)
             self.settings = self._load()
+
+
+def _migrate_ise_tls(data: dict) -> None:
+    """TLS settings used to be per API (ise.openapi.* and ise.pxgrid.*): they are one ise.* setting now."""
+    ise = data.get("ise")
+    if not isinstance(ise, dict):
+        return
+    verify: list[bool] = []
+    cas: list[str] = []
+    for sub in ("openapi", "pxgrid"):
+        part = ise.get(sub)
+        if isinstance(part, dict):
+            if "verify_tls" in part:
+                verify.append(bool(part.pop("verify_tls")))
+            if part.get("ca_cert"):
+                cas.append(part["ca_cert"])
+            part.pop("ca_cert", None)
+    if verify and "verify_tls" not in ise:
+        ise["verify_tls"] = all(verify)
+    if cas and not ise.get("ca_cert"):
+        ise["ca_cert"] = cas[0]
 
 
 def _deep_merge(base: dict, over: dict) -> dict:

@@ -9,6 +9,7 @@ interface Props {
   link: Link;
   onClose: () => void;
   onChanged: () => void;
+  onDecided: () => void; // approved or rejected: back to the pending list
 }
 
 interface Detail {
@@ -16,7 +17,7 @@ interface Detail {
   analysis: Analysis;
 }
 
-export default function PairPanel({ link, onClose, onChanged }: Props) {
+export default function PairPanel({ link, onClose, onChanged, onDecided }: Props) {
   const pid = link.proposal_id ?? link.last_decision_id;
   const [detail, setDetail] = useState<Detail | null>(null);
   const [editing, setEditing] = useState(false);
@@ -86,14 +87,12 @@ export default function PairPanel({ link, onClose, onChanged }: Props) {
     act(async () => {
       await post(`/proposals/${pid}/approve`, { mode: a?.changes_base ? mode : undefined, merge });
       setConflict(null);
-      await load();
-      onChanged();
+      onDecided();
     });
   const reject = () =>
     act(async () => {
       await post(`/proposals/${pid}/reject`);
-      await load();
-      onChanged();
+      onDecided();
     });
   const reopen = () =>
     act(async () => {
@@ -113,7 +112,19 @@ export default function PairPanel({ link, onClose, onChanged }: Props) {
     if (p.kind === "new") {
       name = t.newName(a.new_name);
       aclTitle = t.newTitle;
-      approveLabel = conflict ? t.mergeApprove : t.approveIn(a.write_mode);
+      approveLabel = conflict ? t.mergeApprove : t.approve;
+    } else if (p.kind === "unknown") {
+      const fw = p.features.egress_firewall !== false;
+      if (base) {
+        name = t.unknownName(base);
+        aclTitle = t.unknownTitle(base);
+        approveLabel = t.assign(base);
+      } else {
+        name = t.newName(a.new_name);
+        aclTitle = t.newTitle;
+        approveLabel = conflict ? t.mergeApprove : t.approve;
+      }
+      hint = { title: t.unknownHintTitle(fw), text: t.unknownHint(fw) };
     } else if (p.kind === "reuse") {
       name = t.reuseName(base);
       aclTitle = t.reuseTitle(base);

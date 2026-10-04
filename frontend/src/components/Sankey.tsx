@@ -1,11 +1,22 @@
 import { useMemo } from "react";
-import type { Link } from "../types";
+import type { Link, LinkStatus } from "../types";
 import { useI18n } from "../i18n";
 
+// Layout: thin start and end bars at the same distance from the edges of the panel, ribbons in
+// a solid, semi-transparent status colour (no gradient). Each bar is made of one segment per
+// ribbon, in the colour of that ribbon.
 const W = 1000;
-const NODE_W = 12;
+const BAR = 4;
 const GAP = 18;
 const MAX_H = 440;
+const XM = W - BAR;
+
+export const STATUS_COLOR: Record<LinkStatus, string> = {
+  allowed: "var(--ok)",
+  partial: "var(--part)",
+  pending: "var(--pend)",
+  rejected: "var(--rejected)",
+};
 
 interface Props {
   links: Link[];
@@ -13,10 +24,6 @@ interface Props {
   matches: (l: Link) => boolean;
   onSelect: (id: string) => void;
 }
-
-const COLORS: Record<string, string> = {
-  allowed: "var(--ok)", partial: "var(--pend)", pending: "var(--pend)", rejected: "var(--rej)",
-};
 
 export default function Sankey({ links, selected, matches, onSelect }: Props) {
   const { m, fmt } = useI18n();
@@ -55,38 +62,49 @@ export default function Sankey({ links, selected, matches, onSelect }: Props) {
   }, [links]);
 
   if (!links.length) return <div className="empty">{m.sankey.empty}</div>;
-  const xm = W / 2;
   const f = (v: number) => v.toFixed(1);
-  const halo = { paintOrder: "stroke", stroke: "var(--card)", strokeWidth: 4, strokeLinejoin: "round" } as const;
+  const xm = (BAR + XM) / 2;
+  const halo = { paintOrder: "stroke", stroke: "#0d1014", strokeWidth: 4, strokeLinejoin: "round" } as const;
+  const opacity = (l: Link) => {
+    let op = l.status === "allowed" ? 0.42 : l.status === "rejected" ? 0.5 : 0.55;
+    if (selected === l.id) op = Math.min(op + 0.3, 0.85);
+    else if (selected) op *= 0.5;
+    return matches(l) ? op : 0.06;
+  };
 
   return (
-    <div style={{ overflowX: "auto" }}>
-      <svg viewBox={`0 0 ${W} ${layout.H}`} style={{ display: "block", width: "100%", minWidth: 640, height: "auto" }}
+    <div className="sankey-panel">
+      <svg viewBox={`0 0 ${W} ${layout.H}`} style={{ display: "block", width: "100%", height: "auto", overflow: "visible" }}
         role="img" aria-label={m.sankey.aria}>
         {links.map((l) => {
           const p = layout.ys[l.id];
           const a = p.sy!, b = p.sy! + p.w, c = p.dy!, d = p.dy! + p.w;
           const match = matches(l);
-          let op = l.status === "pending" ? 0.62 : l.status === "partial" ? 0.28 : l.status === "allowed" ? 0.3 : 0.22;
-          if (selected === l.id) op = Math.max(op + 0.3, 0.6);
-          if (!match) op = 0.06;
           return (
             <path key={l.id}
-              d={`M${NODE_W} ${f(a)} C${xm} ${f(a)} ${xm} ${f(c)} ${W - NODE_W} ${f(c)} L${W - NODE_W} ${f(d)} C${xm} ${f(d)} ${xm} ${f(b)} ${NODE_W} ${f(b)} Z`}
-              fill={COLORS[l.status]} fillOpacity={op}
-              stroke={l.status === "partial" && match ? "var(--pend)" : "none"} strokeWidth={1.5} strokeDasharray="5 3"
+              d={`M${BAR} ${f(a)} C${xm} ${f(a)} ${xm} ${f(c)} ${XM} ${f(c)} L${XM} ${f(d)} C${xm} ${f(d)} ${xm} ${f(b)} ${BAR} ${f(b)} Z`}
+              fill={STATUS_COLOR[l.status]} fillOpacity={opacity(l)}
+              stroke={l.status === "partial" && match ? "var(--part)" : "none"} strokeWidth={1.2} strokeDasharray="5 3"
+              strokeOpacity={0.8}
               style={{ cursor: "pointer", transition: "fill-opacity .15s" }}
               onClick={() => onSelect(l.id)}>
               <title>{`${l.src} → ${l.dst} · ${m.sankey.flows(fmt(l.flows))} · ${m.status[l.status]}`}</title>
             </path>
           );
         })}
+        {links.flatMap((l) => {
+          const p = layout.ys[l.id];
+          const style = { fill: STATUS_COLOR[l.status], fillOpacity: matches(l) ? 1 : 0.25, cursor: "pointer" };
+          return [
+            <rect key={"s:" + l.id} x={0} y={p.sy} width={BAR} height={p.w} style={style} onClick={() => onSelect(l.id)} />,
+            <rect key={"d:" + l.id} x={XM} y={p.dy} width={BAR} height={p.w} style={style} onClick={() => onSelect(l.id)} />,
+          ];
+        })}
         {[...layout.left.map((n) => ({ ...n, left: true })), ...layout.right.map((n) => ({ ...n, left: false }))].map((n) => (
-          <g key={(n.left ? "s:" : "d:") + n.name}>
-            <rect x={n.left ? 0 : W - NODE_W} y={n.y} width={NODE_W} height={Math.max(n.h, 2)} rx={2} fill="#a7adb5" />
-            <text x={n.left ? NODE_W + 8 : W - NODE_W - 8} y={n.y + n.h / 2 - 1} textAnchor={n.left ? "start" : "end"}
-              style={{ ...halo, fill: "var(--text)", font: "600 14px var(--sans)" }}>{n.name}</text>
-            <text x={n.left ? NODE_W + 8 : W - NODE_W - 8} y={n.y + n.h / 2 + 13} textAnchor={n.left ? "start" : "end"}
+          <g key={(n.left ? "s:" : "d:") + n.name} pointerEvents="none">
+            <text x={n.left ? BAR + 8 : XM - 8} y={n.y + n.h / 2 - 1} textAnchor={n.left ? "start" : "end"}
+              style={{ ...halo, fill: "var(--text)", font: "600 13px var(--sans)" }}>{n.name}</text>
+            <text x={n.left ? BAR + 8 : XM - 8} y={n.y + n.h / 2 + 13} textAnchor={n.left ? "start" : "end"}
               style={{ ...halo, fill: "var(--text-3)", font: "400 11px var(--mono)" }}>{m.sankey.flows(fmt(n.flows))}</text>
           </g>
         ))}

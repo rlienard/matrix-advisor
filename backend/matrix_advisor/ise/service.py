@@ -16,7 +16,7 @@ from ..i18n import Message, message_of
 from ..ingest.resolver import SGTResolver
 from ..policy.matrix import Matrix
 from .client import ISEClient, ISEError
-from .pxgrid import PxGridClient, PxGridError, sessions_to_mapping
+from .pxgrid import PxGridError, pxgrid_client, sessions_to_mapping
 
 log = logging.getLogger(__name__)
 
@@ -31,8 +31,7 @@ class ISEService:
         self.resolver = resolver
         self.matrix = Matrix(default=config.settings.ise.matrix_default)
         self.client = ISEClient(config.settings.ise)
-        self.pxgrid = PxGridClient(config.settings.ise.pxgrid) if config.settings.ise.pxgrid.node or \
-            config.settings.ise.pxgrid.base_url else None
+        self.pxgrid = pxgrid_client(config.settings.ise)
         self.status = {
             "online": False, "last_sync": None, "last_error": None,
             "pxgrid": {"state": "not configured", "last_update": None, "error": None, "mode": None},
@@ -52,7 +51,7 @@ class ISEService:
             await self.pxgrid.close()
         ise = self.config.settings.ise
         self.client = ISEClient(ise)
-        self.pxgrid = PxGridClient(ise.pxgrid) if ise.pxgrid.node or ise.pxgrid.base_url else None
+        self.pxgrid = pxgrid_client(ise)
         self.matrix.default = ise.matrix_default
 
     def request_reconcile(self) -> None:

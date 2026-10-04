@@ -7,5 +7,5 @@ export const STATUS_CLS: Record<LinkStatus, string> = {
   allowed: "ok",
   partial: "partial",
   pending: "warn",
-  rejected: "grey",
+  rejected: "bad",
 };

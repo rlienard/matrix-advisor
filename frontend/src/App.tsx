@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { get, post, setUnauthorizedHandler } from "./api";
 import Dashboard from "./components/Dashboard";
-import Header from "./components/Header";
+import Header, { type Service } from "./components/Header";
 import Login from "./components/Login";
 import Settings from "./components/Settings";
 import { useI18n } from "./i18n";
@@ -11,6 +11,7 @@ import type { Status } from "./types";
 export default function App() {
   const [user, setUser] = useState<string | null | undefined>(undefined);
   const [view, setView] = useState<"dash" | "settings">("dash");
+  const [settingsTab, setSettingsTab] = useState<Service | undefined>(undefined);
   const [status, setStatus] = useState<Status | null>(null);
   const { lang, setLang } = useI18n();
 
@@ -43,10 +44,13 @@ export default function App() {
       <Header
         status={status}
         view={view}
-        onToggleView={() => setView(view === "dash" ? "settings" : "dash")}
-        onResync={async () => {
-          await post("/ise/sync").catch(() => undefined);
-          refreshStatus();
+        onToggleView={() => {
+          setSettingsTab(undefined);
+          setView(view === "dash" ? "settings" : "dash");
+        }}
+        onOpenSettings={(tab) => {
+          setSettingsTab(tab);
+          setView("settings");
         }}
         onLogout={async () => {
           await post("/auth/logout");
@@ -56,7 +60,7 @@ export default function App() {
       {view === "dash" ? (
         <Dashboard status={status} />
       ) : (
-        <Settings onSaved={refreshStatus} />
+        <Settings key={settingsTab ?? "default"} status={status} initialTab={settingsTab} onChanged={refreshStatus} />
       )}
     </div>
   );

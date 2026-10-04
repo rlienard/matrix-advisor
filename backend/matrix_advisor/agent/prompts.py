@@ -20,6 +20,10 @@ Answer with one JSON object and nothing else:
  "recommendation": "approve" | "review" | "reject",
  "justification": "<2 to 3 short sentences in LANGUAGE for the administrator, concrete, citing the signals>"}
 
+A destination group flagged "sgt0" is Unknown (SGT 0): unclassified addresses, mostly the
+Internet. When "egress_firewall" is true, a firewall filters that traffic and a permissive cell is
+expected: judge the source behaviour (beaconing, volumes, timing), not the breadth of the contract.
+
 "activity" tells on how many distinct days the pair was seen out of the days observed. Traffic seen
 on very few days may be an infrequent but legitimate job (monthly batch, backups): say so, and warn
 that ports it uses but that were not observed will be denied.
@@ -55,6 +59,8 @@ def user_prompt(features: dict, assessment: dict, proposal: dict) -> str:
             "activity": features.get("activity") or {},
         },
         "existing_contract_on_cell": features.get("cell_contracts") or [],
+        **({"destination": {"sgt0": True, "egress_firewall": bool(features.get("egress_firewall"))}}
+           if features.get("dst_unknown") else {}),
         "proposal": {
             "kind": proposal["kind"],
             "base_contract": proposal.get("base_contract"),

@@ -22,7 +22,8 @@ backend/matrix_advisor/
   i18n.py              FR/EN API messages (Message keys, rendered in ui.language)
   store.py             DuckDB schema and queries (flow_minutes 7 days, pair_daily, proposals, audit)
   ingest/              goflow.py (tail NDJSON, orient), resolver.py (IP→SGT), pipeline.py (loop)
-  ise/                 client.py (ERS + OpenAPI), pxgrid.py (pxGrid 2.0 + STOMP), service.py (cache, reconcile)
+  ise/                 client.py (ERS + OpenAPI), pxgrid.py (pxGrid 2.0 + STOMP, secondary node), service.py
+                       (cache, reconcile), certs.py (pxGrid client certificate, ISE chain, <data>/certs)
   policy/              acl.py (SGACL parse/validate), matrix.py (coverage), impact.py (shared-contract impact)
   agent/               advisor.py (proposals), risk.py (heuristics), llm.py (providers + IP guard), prompts.py,
                        actions.py (approve/reject/edit and ISE writes)
@@ -81,6 +82,11 @@ MA_CONFIG_TEMPLATE=/app/deploy/config.demo.yaml docker compose --profile demo --
 - **Ownership:** created/cloned SGACLs carry `ise.sgacl_prefix` (default `MA_`); every decision is audited.
 - **Secrets:** never in YAML, logs, API responses (masked as `********`) or the LLM payload.
 - **No silent writes:** nothing is written to ISE without an explicit approval from the UI/API.
+  The only write outside proposals is the import of a generated pxGrid certificate into the ISE trusted
+  store, on an explicit click with the option on; it is audited.
+- **Unknown (SGT 0):** unclassified addresses (Internet included) resolve to SGT 0. Towards it, proposals
+  are permissive (`Permit IP`) only when `ise.egress_firewall` is on; read-only contracts are cloned, never
+  modified.
 
 ## Conventions
 
@@ -102,6 +108,14 @@ MA_CONFIG_TEMPLATE=/app/deploy/config.demo.yaml docker compose --profile demo --
 - UI look: dark theme inspired by Cisco Cloud Control (Magnetic `onecd-dark` tokens in `styles.css`:
   page `#0F1214`, card `#171B20`, primary `#649EF5`, ok `#4CBF7F`, Inter). No Cisco logo or product name:
   this is not an official Cisco product.
+- Settings UX (validated in the mockup): ISE in three sub-tabs (Cluster ISE / pxGrid / Options avancées);
+  one test button per page, and a status line per page where the latest event (test, save, resync)
+  replaces the previous message; saving tests the service of the current page only; the cluster is
+  scanned on save; the model list is refreshed whenever the dropdown opens; no temperature, IP toggle
+  or config.yaml preview in the UI. Header: one aggregated « Services » pill (opens the settings).
+  Dashboard: bulk select/approve/reject of pending proposals, the panel closes after a decision;
+  Sankey with thin start/end bars coloured per ribbon, solid semi-transparent ribbons, rejected red,
+  partially covered blue.
 - UX decisions already validated with the author: SGACL editor locked by default ("Modifier" →
   "Valider la modification" / "Annuler"); approve disabled while editing; the clone/in-place choice appears
   only after "Valider la modification"; once cloned, show the clone name with « Cloné à partir de : … ».
@@ -120,13 +134,12 @@ MA_CONFIG_TEMPLATE=/app/deploy/config.demo.yaml docker compose --profile demo --
 - SGT in flow records: `deploy/goflow2/mapping.yaml` assumes NetFlow v9 fields 34000/34001 and IPFIX
   enterprise elements 1232/1233 with PEN 9 (verified with flowgen `--sgt` + GoFlow2 2.2.7 only): capture
   a real switch export to confirm.
-- Planned (validated in the UI mockup, not implemented yet): ISE settings split into Cluster / pxGrid / Advanced
-  tabs; automatic cluster scan once PAN + ERS credentials are set (pxGrid nodes in dropdowns, optional secondary
-  node); pxGrid client certificate either generated self-signed or uploaded from the UI; optional import of the
-  generated public certificate into the ISE trusted store via `POST /api/v1/certs/trusted-certificate/import`
-  (needs `trustForClientAuth` and `allowBasicConstraintCAFalse`; field names, required admin role and response to
-  check in the ISE Swagger). That import is an explicit, audited write, never silent. pxGrid client approval stays
-  manual unless auto-approve is enabled in ISE.
+- ISE trusted-certificate import (`POST /api/v1/certs/trusted-certificate/import`, fields
+  `trustForClientAuth`, `allowBasicConstraintCAFalse`…) is written from the ISE 3.x OpenAPI model and
+  tested only against the simulator: check field names, required admin role and response in the ISE
+  Swagger. pxGrid client approval stays manual unless auto-approve is enabled in ISE.
+- Unknown is assumed to be SGT 0 (looked up by value) and `Permit IP` is found by content (`permit ip`,
+  read-only first): check the names of the built-ins on the target ISE.
 - Docker images and the Lima script have not been built/run yet; check arm64 availability of
   `netsampler/goflow2` on Apple Silicon.
 - Roadmap: multiple matrices.

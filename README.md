@@ -92,7 +92,10 @@ cameras and guests. Within a minute you get proposals for the scenarios used in 
 - `Contractors → Web_Servers`: covered by `Web_Access` → **reuse**; edit it to remove port 80 and the
   impact analysis forces a **clone**, because `Employees → Web_Servers` still uses port 80;
 - `Contractors → Finance_DB`: SQL from three laptops → **high risk**;
-- `IoT_Cameras → Internet`: one connection every 5 minutes → **beaconing**, outside the matrix;
+- `IoT_Cameras → Unknown`: one connection every 5 minutes to the Internet (SGT 0) → **beaconing**,
+  high risk. Towards Unknown the proposal depends on *Pare-feu entre le LAN et Internet*
+  (Configuration › Cisco ISE › Options avancées): on (default), the cell stays permissive with the
+  built-in `Permit IP` and the firewall does the filtering; off, least privilege as for any pair;
 - conflict on approval: simulate an administrator changing the cell behind the advisor's back, then
   approve `IT_Admins → Finance_DB`:
   `curl -X POST localhost:9060/sim/conflict -H 'content-type: application/json' -d '{"src":"IT_Admins","dst":"Finance_DB"}'`
@@ -110,10 +113,13 @@ heuristic analysis (badge “Heuristique”).
 
 - **ERS**: enable it on the PAN (*Administration › System › Settings › API Settings*) and create an
   admin user with the **ERS Admin** role. Matrix Advisor reads and writes `sgt`, `sgacl` and
-  `egressmatrixcell`, and reads `/api/v1/deployment/node` (pxGrid node discovery).
-- **pxGrid**: enable pxGrid on at least one node. Use certificate authentication (recommended:
-  generate a client certificate from *Administration › pxGrid Services › Certificates*) or password
-  authentication. Approve the `matrix-advisor` client the first time it connects.
+  `egressmatrixcell`, and reads `/api/v1/deployment/node` (cluster scan: pxGrid nodes). Importing a
+  generated pxGrid certificate into the trusted store (`POST /api/v1/certs/trusted-certificate/import`,
+  optional, on an explicit click, audited) needs rights on certificates.
+- **pxGrid**: enable pxGrid on at least one node (a second one can be set as fallback). Use
+  certificate authentication (recommended: generate a self-signed client certificate from
+  *Configuration › Cisco ISE › pxGrid*, or upload one) or password authentication. Approve the
+  `matrix-advisor` client the first time it connects.
 - Matrix Advisor subscribes to the session and TrustSec configuration topics; if websockets are not
   reachable it falls back to polling.
 
@@ -158,10 +164,20 @@ mkdir certs                     # pxGrid client cert/key and ISE CA, mounted rea
 docker compose up -d --build
 ```
 
-Then open the UI, go to **Configuration**, fill in ISE (use *Découvrir les nœuds pxGrid* to pick a
-pxGrid node), the LLM endpoint and the collector settings, and test each connection. Settings are
-saved to `/data/config.yaml`; secrets go to `/data/secrets.json` (mode 0600) unless provided as
-environment variables, which always win.
+Then open the UI and go to **Configuration**:
+
+- *Modèle IA*: provider, *Locale* (same machine: only the port; inside a container the host is found
+  automatically, `MA_LLM_LOCAL_HOST` overrides it) or *Distante* (endpoint URL); the model list is
+  read from Ollama or vLLM each time the dropdown opens.
+- *Cisco ISE*: *Cluster ISE* (PAN, API account, ISE certificate chain and TLS verification; saving
+  scans the cluster), *pxGrid* (nodes from the scan, client certificate), *Options avancées* (write
+  mode, prefix, reconciliation, default policy, egress firewall, lab base URLs).
+- *Collecteur NetFlow* and *Langue*.
+
+Each page has its own test button and status line; saving tests the service of the page. Settings
+are saved to `/data/config.yaml`; secrets go to `/data/secrets.json` (mode 0600) unless provided as
+environment variables, which always win. Uploaded and generated certificates go to `/data/certs`
+(private keys 0600).
 
 To keep everything on-prem, run Ollama or vLLM on a GPU host next to Matrix Advisor
 (`docker compose --profile llm up -d` runs Ollama on the same host).
@@ -173,13 +189,18 @@ See [deploy/config.example.yaml](deploy/config.example.yaml). Main keys:
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `llm.provider` | `ollama` | `ollama`, `openai` (any OpenAI-compatible server), `anthropic`, `azure` |
+| `llm.location` / `llm.port` | `remote` / `11434` | Ollama/vLLM: `local` uses `http://<this host>:<port>` (container-aware), `remote` uses `llm.endpoint` |
 | `llm.trigger` | `event` | `event`: analyse when a new pair or port appears; `scheduled`: every `scheduled_minutes` |
 | `llm.learning_days` | `14` | Silent observation before the first proposals |
 | `ise.write_mode` | `monitor` | New cells written as `MONITOR` or `ENABLED` |
 | `ise.sgacl_prefix` | `MA_` | Prefix of created and cloned SGACLs |
 | `ise.matrix_default` | `deny` | Matrix default used to compute what would be blocked |
+| `ise.egress_firewall` | `true` | A firewall filters LAN → Internet: contracts towards Unknown (SGT 0) stay permissive |
+| `ise.verify_tls` / `ise.ca_cert` | `true` / `""` | TLS towards ISE (ERS/OpenAPI and pxGrid), against the ISE chain or the system store |
+| `ise.pxgrid.secondary_node` | `""` | pxGrid node used when the primary one does not answer |
+| `ise.pxgrid.import_to_ise_trust` | `true` | Import a generated client certificate into the ISE trusted store (audited) |
 | `ise.static_bindings` | `{}` | Extra `CIDR: SGT` mappings (servers without SXP bindings) |
-| `collector.allowed_exporters` | `[10.0.0.0/8]` | Flow exporters accepted |
+| `collector.allowed_exporters` | `[10.0.0.0/8]` | Flow exporters accepted (empty: any) |
 | `collector.retention_days` | `30` | Daily aggregates and Parquet archive retention (per-minute detail: 7 days) |
 
 ## API
@@ -188,7 +209,9 @@ The UI only uses the REST API (`/api/...`, session cookie). Interactive docs at 
 Main endpoints: `GET /api/dashboard`, `GET /api/proposals`, `POST /api/proposals/{id}/analyse`,
 `PUT /api/proposals/{id}/edit`, `POST /api/proposals/{id}/approve` (`{acl?, mode?, merge?}`),
 `POST /api/proposals/{id}/reject`, `POST /api/ise/sync`, `GET|PUT /api/config`,
-`POST /api/config/test/{llm|ise|collector}`, `POST /api/ise/pxgrid-nodes`, `GET /api/audit`.
+`POST /api/config/test/{llm|ise|pxgrid|collector}`, `POST /api/ise/pxgrid-nodes`, `POST /api/llm/models`,
+`GET /api/ise/certificates`, `POST /api/ise/certificates/upload`, `POST /api/ise/pxgrid/certificate`,
+`GET /api/audit`.
 
 ## Development
 

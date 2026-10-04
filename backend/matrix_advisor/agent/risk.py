@@ -6,7 +6,7 @@ Used to give the LLM grounded signals, and as the full answer when the LLM is of
 from __future__ import annotations
 
 from ..policy import acl
-from ..policy.matrix import INTERNET, UNKNOWN
+from ..policy.matrix import UNKNOWN
 
 # A pair seen on at most RARE_MAX_DAYS distinct days, out of at least RARE_MIN_WINDOW days of
 # observation, is "rare": possibly a periodic job (monthly batch) whose ports were not all observed.
@@ -33,11 +33,15 @@ TEXTS = {
         "rare_since": ", dernier flux il y a {days} jour(s)",
         "rare": "trafic rare : vu {seen} jour(s) sur {observed} jours d’observation{since} ; vérifier qu’il s’agit "
                 "d’un besoin récurrent (traitement mensuel ?) et que tous ses ports ont été vus",
-        "unknown": "adresses sans SGT : vérifier l’affectation des endpoints dans ISE",
+        "unknown": "source sans SGT (Unknown) : vérifier l’affectation des endpoints dans ISE",
         "regular": "profil régulier réparti sur {hosts} hôte(s) source, ports cohérents avec un service applicatif",
         "extend": "La cellule contient déjà {base} ; seuls les ports nouveaux sont ajoutés.",
         "reuse": "Le contrat existant {base} couvre déjà ces ports : réutilisation plutôt qu’une nouvelle SGACL.",
         "new": "Aucun contrat existant ne couvre ces ports : nouvelle SGACL au plus juste.",
+        "unknown_fw": "Destination Unknown (SGT 0), en général Internet, derrière le pare-feu de sortie qui fait le "
+                      "filtrage fin : cellule permissive ({base}).",
+        "unknown_nofw": "Destination Unknown (SGT 0) sans pare-feu de sortie déclaré : la matrice est le seul "
+                        "contrôle, contrat restreint aux ports observés.",
         "external": "Destination ou source sans SGT : à traiter par une politique de sortie (pare-feu), "
                     "pas par la matrice TrustSec.",
         "summary": "{total} flux observés. {reasons}. {lead}",
@@ -53,11 +57,15 @@ TEXTS = {
         "rare_since": ", last flow {days} day(s) ago",
         "rare": "rare traffic: seen on {seen} day(s) out of {observed} days of observation{since}; check that it "
                 "is a recurring need (monthly job?) and that all its ports have been seen",
-        "unknown": "addresses without an SGT: check endpoint assignment in ISE",
+        "unknown": "source without an SGT (Unknown): check endpoint assignment in ISE",
         "regular": "regular profile spread over {hosts} source host(s), ports consistent with an application service",
         "extend": "The cell already holds {base}; only the new ports are added.",
         "reuse": "The existing contract {base} already covers these ports: reused rather than a new SGACL.",
         "new": "No existing contract covers these ports: new least-privilege SGACL.",
+        "unknown_fw": "Unknown destination (SGT 0), usually the Internet, behind the egress firewall that does the "
+                      "fine filtering: permissive cell ({base}).",
+        "unknown_nofw": "Unknown destination (SGT 0) with no declared egress firewall: the matrix is the only "
+                        "control, contract restricted to the observed ports.",
         "external": "Destination or source without an SGT: handle it with an egress (firewall) policy, "
                     "not with the TrustSec matrix.",
         "summary": "{total} flows observed. {reasons}. {lead}",
@@ -87,7 +95,9 @@ def assess(features: dict, lang: str = "fr") -> dict:
         if order.index(level) > order.index(risk):
             risk = level
 
-    if features["dst"] == INTERNET and beh.get("periodic_host_pairs"):
+    src_unknown = features.get("src_unknown", features["src"] == UNKNOWN)
+    dst_unknown = features.get("dst_unknown", features["dst"] == UNKNOWN)
+    if dst_unknown and beh.get("periodic_host_pairs"):
         bump("high")
         reasons.append(_t(lang, "beaconing", interval=beh.get("periodic_interval_s"),
                           pairs=beh["periodic_host_pairs"]))
@@ -113,7 +123,7 @@ def assess(features: dict, lang: str = "fr") -> dict:
         last = act.get("last_seen_days_ago")
         since = _t(lang, "rare_since", days=last) if last else ""
         reasons.append(_t(lang, "rare", seen=act["days_seen"], observed=act["observed_days"], since=since))
-    if features["src"] == UNKNOWN or features["dst"] == UNKNOWN:
+    if src_unknown:
         bump("medium")
         reasons.append(_t(lang, "unknown"))
 
@@ -125,5 +135,7 @@ def assess(features: dict, lang: str = "fr") -> dict:
 
 def fallback_justification(features: dict, assessment: dict, kind: str, base: str | None, lang: str = "fr") -> str:
     reasons = "; ".join(assessment["reasons"])
+    if kind == "unknown":
+        kind = "unknown_fw" if features.get("egress_firewall", True) else "unknown_nofw"
     return _t(lang, "summary", total=features["total_flows"], reasons=reasons[0].upper() + reasons[1:],
-              lead=_t(lang, kind, base=base))
+              lead=_t(lang, kind, base=base or "permit ip"))

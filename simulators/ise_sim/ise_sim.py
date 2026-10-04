@@ -2,7 +2,7 @@
 
 Implements the subset of Cisco ISE used by Matrix Advisor:
   * ERS: /ers/config/sgt, /ers/config/sgacl, /ers/config/egressmatrixcell (list, get, create, update)
-  * OpenAPI: /api/v1/deployment/node
+  * OpenAPI: /api/v1/deployment/node, /api/v1/certs/trusted-certificate[/import]
   * pxGrid 2.0 control (AccountActivate, ServiceLookup, AccessSecret) and REST
     (session/getSessions, sxp/getBindings)
   * pxGrid pubsub: STOMP over websocket at /pxgrid/ise/pubsub. SGT changes are published on
@@ -31,7 +31,7 @@ PASSWORD = os.environ.get("SIM_PASSWORD", "demo-password")
 DOMAIN = os.environ.get("SIM_DOMAIN", "lab.local")
 
 SGTS = [
-    ("Employees", 4), ("Contractors", 5), ("IT_Admins", 6), ("IoT_Cameras", 7), ("Guests", 8),
+    ("Unknown", 0), ("Employees", 4), ("Contractors", 5), ("IT_Admins", 6), ("IoT_Cameras", 7), ("Guests", 8),
     ("Web_Servers", 10), ("HR_Servers", 11), ("Print_Servers", 12), ("Finance_DB", 13), ("Video_NVR", 14),
 ]
 SGACLS = {
@@ -40,6 +40,8 @@ SGACLS = {
     "Admin_SSH": "permit tcp dst eq 22\ndeny ip",
     "HR_Portal": "permit tcp dst eq 443\ndeny ip",
 }
+# Built-in contracts of ISE: read-only, names with a space.
+BUILTIN_SGACLS = {"Permit IP": "permit ip", "Deny IP": "deny ip"}
 CELLS = [
     ("Employees", "Web_Servers", ["Web_Access"]),
     ("Employees", "Print_Servers", ["Printing"]),
@@ -66,14 +68,14 @@ def _id() -> str:
 
 
 def seed() -> dict:
-    st: dict = {"sgt": {}, "sgacl": {}, "egressmatrixcell": {}, "accounts": {}}
+    st: dict = {"sgt": {}, "sgacl": {}, "egressmatrixcell": {}, "accounts": {}, "trusted_certs": {}}
     for name, value in SGTS:
         i = _id()
         st["sgt"][i] = {"id": i, "name": name, "value": value, "description": "", "generationId": "0"}
-    for name, content in SGACLS.items():
+    for name, content in [*BUILTIN_SGACLS.items(), *SGACLS.items()]:
         i = _id()
-        st["sgacl"][i] = {"id": i, "name": name, "description": "", "ipVersion": "IPV4", "readOnly": False,
-                          "aclcontent": content, "generationId": "0"}
+        st["sgacl"][i] = {"id": i, "name": name, "description": "", "ipVersion": "IPV4",
+                          "readOnly": name in BUILTIN_SGACLS, "aclcontent": content, "generationId": "0"}
     for src, dst, acls in CELLS:
         i = _id()
         st["egressmatrixcell"][i] = {
@@ -170,6 +172,8 @@ async def ers_update(res: str, oid: str, request: Request):
         raise HTTPException(404)
     body = (await request.json()).get(WRAP.get(res, ""), {})
     current = STATE[res][oid]
+    if current.get("readOnly"):
+        raise HTTPException(400, "read-only object")
     if res == "sgacl" and body.get("generationId") not in (None, current["generationId"]):
         raise HTTPException(409, "generationId mismatch: object changed")
     merged = {**current, **body, "id": oid}
@@ -193,6 +197,32 @@ def nodes(request: Request):
         n("ise-px1", "10.10.20.21", [], ["Session", "Profiler", "pxGrid"]),
         n("ise-px2", "10.10.20.22", [], ["Session", "pxGrid"]),
     ], "version": "1.0.0"}
+
+
+# Account allowed to import certificates (the API user by default; another name simulates a refusal).
+CERT_ADMIN = os.environ.get("SIM_CERT_ADMIN", USER)
+
+
+@app.post("/api/v1/certs/trusted-certificate/import")
+async def trusted_import(request: Request):
+    _ers(request)
+    if USER != CERT_ADMIN:
+        raise HTTPException(403, "insufficient rights on certificates")
+    body = await request.json()
+    pem = body.get("data", "")
+    if "BEGIN CERTIFICATE" not in pem or not body.get("name"):
+        raise HTTPException(400, "data must be a PEM certificate and name is required")
+    if any(c["name"] == body["name"] for c in STATE["trusted_certs"].values()):
+        raise HTTPException(400, "a trusted certificate with this name already exists")
+    oid = _id()
+    STATE["trusted_certs"][oid] = {"id": oid, **{k: v for k, v in body.items() if k != "data"}}
+    return {"response": {"id": oid, "message": "Trusted certificate was successfully imported"}, "version": "1.0.0"}
+
+
+@app.get("/api/v1/certs/trusted-certificate")
+def trusted_list(request: Request):
+    _ers(request)
+    return {"response": list(STATE["trusted_certs"].values()), "version": "1.0.0"}
 
 
 # ------------------------------------------------------------------ pxGrid

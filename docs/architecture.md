@@ -14,8 +14,8 @@
    - *SGT attribution*: the group tag exported in the flow record (`src_sgt`/`dst_sgt`, Cisco CTS
      fields mapped by `deploy/goflow2/mapping.yaml`) when its value is in the ISE SGT table and
      `collector.sgt_source` is `auto`; otherwise IP resolution: pxGrid session (exact IP) >
-     SXP/IP-SGT binding (prefix) > static binding from the configuration > `Internet` (public
-     address) or `Unknown` (private address). Tags are swapped together with the addresses when a
+     SXP/IP-SGT binding (prefix) > static binding from the configuration > `Unknown` (SGT 0, the
+     tag the switches enforce for any unclassified address, Internet destinations included). Tags are swapped together with the addresses when a
      reply is folded onto its request. Ingestion waits (up to 3 minutes) for the ISE SGT table and
      the first pxGrid context so that early flows are not attributed to `Unknown` for good.
      `/api/status` counts flow sides attributed from tags (`sgt_from_flow`) and unknown tag values
@@ -60,8 +60,11 @@ days, daily rollups beyond the 7 days of per-minute detail), so a monthly job se
 proposed before default-deny. After the learning phase, for each non-covered pair without an open
 proposal:
 
-1. **Kind** (deterministic): `external` if a side has no SGT; `extend` if the cell has a contract
-   (the prefixed one if any); `reuse` if an existing SGACL covers all observed ports with at most two
+1. **Kind** (deterministic): `external` if a side is not in the ISE SGT table; `extend` if the cell
+   has a contract (the prefixed one if any); `unknown` towards SGT 0: with `ise.egress_firewall`
+   (default) the built-in `Permit IP` is assigned (or a `permit ip` SGACL created), since the egress
+   firewall filters that traffic; without it, least privilege like `new`. A read-only contract such
+   as `Permit IP` is always cloned when edited. `reuse` if an existing SGACL covers all observed ports with at most two
    extra permits (same destination group first, then fewest extras); else `new` with one permit per
    observed port and `deny ip log`.
 2. **Features** (no IP): ports with flow and host counts, number of source hosts, first seen,
@@ -82,8 +85,8 @@ is never replaced automatically.
 2. Lock writes, re-read the cell from ISE, compare its fingerprint with the one recorded at
    proposal time. Different → HTTP 409 with the current contracts; the UI offers *merge*.
 3. Apply:
-   - `new`: create `<prefix><src>_to_<dst>`, add it to the cell;
-   - `reuse` unchanged: add the existing SGACL to the cell;
+   - `new` (and `unknown` without a base contract): create `<prefix><src>_to_<dst>`, add it to the cell;
+   - `reuse` (and `unknown` with `Permit IP`) unchanged: add the existing SGACL to the cell;
    - changed existing contract, `clone`: create `<prefix><base>_<src>` and point only this cell to it;
    - changed existing contract, `inplace`: allowed only if the impact analysis (over the same retained
      history as the advisor) finds no observed traffic
@@ -91,3 +94,22 @@ is never replaced automatically.
      have changed since the proposal.
 4. Create or update the cell: new cells get `MONITOR` or `ENABLED` per `write_mode`, existing cells
    keep their status. Reconcile, store the result and audit the decision.
+
+## Settings and certificates
+
+- `ise.verify_tls` and `ise.ca_cert` apply to ERS/OpenAPI and pxGrid alike (older per-API keys are
+  migrated on load). `ise.pxgrid.secondary_node` is tried when the primary node cannot be reached.
+- pxGrid client certificate: generated (`POST /api/ise/pxgrid/certificate`: RSA 2048, self-signed,
+  clientAuth, new file names each time) or uploaded (`POST /api/ise/certificates/upload`, PEM or DER,
+  key checked with its password). Files live in `<data>/certs`, keys with mode 0600; the configuration
+  points to them only once the operator saves. With `import_to_ise_trust`, generation also imports
+  the public certificate into the ISE trusted store (`POST /api/v1/certs/trusted-certificate/import`,
+  trusted for client authentication); the click is the explicit approval, and both the generation
+  and the import are audited.
+- `POST /api/llm/models` lists the models of an Ollama (`/api/tags`, `/api/ps`) or vLLM
+  (`/v1/models`) server from unsaved settings. A *local* instance is `http://<host>:<port>` where the
+  host is `localhost`, or inside a container the first of `host.docker.internal`,
+  `host.lima.internal`, `host.containers.internal` that resolves, else the default gateway
+  (`MA_LLM_LOCAL_HOST` overrides).
+- `POST /api/config/test/{llm|ise|pxgrid|collector}` tests one service with unsaved settings; the
+  LLM status also turns red as soon as a real call times out, and green on the next answer.

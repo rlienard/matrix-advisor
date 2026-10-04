@@ -31,7 +31,7 @@ def test_subscribe_receives_session_and_trustsec_messages(sim_url):
     httpx.post(sim_url + "/sim/reset")
 
     async def scenario():
-        px = PxGridClient(PxGridConfig(base_url=sim_url, auth="password", password="x", verify_tls=False))
+        px = PxGridClient(PxGridConfig(base_url=sim_url, auth="password", password="x"), verify_tls=False)
         received: list[tuple[str, dict]] = []
 
         async def on_message(topic: str, body: dict) -> None:
@@ -63,7 +63,7 @@ def test_subscribe_receives_session_and_trustsec_messages(sim_url):
 
 def test_subscribe_rejects_bad_secret(sim_url, monkeypatch):
     async def scenario():
-        px = PxGridClient(PxGridConfig(base_url=sim_url, auth="password", password="x", verify_tls=False))
+        px = PxGridClient(PxGridConfig(base_url=sim_url, auth="password", password="x"), verify_tls=False)
 
         async def wrong_secret(peer: str) -> str:
             return "wrong"
@@ -90,7 +90,7 @@ def test_service_uses_websocket_for_sessions_and_reconcile(sim_url, tmp_path):
     cfg = {
         "ise": {
             "pan": "sim", "openapi": {"base_url": sim_url, "username": "matrix-advisor", "password": "demo-password"},
-            "pxgrid": {"base_url": sim_url, "auth": "password", "password": "x", "verify_tls": False},
+            "verify_tls": False, "pxgrid": {"base_url": sim_url, "auth": "password", "password": "x"},
         },
         "collector": {"input_file": str(tmp_path / "none.ndjson"), "parquet_dir": str(tmp_path / "pq")},
         "server": {"admin_password": "secret"},

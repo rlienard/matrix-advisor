@@ -17,6 +17,7 @@ dependencies = [
   "httpx>=0.27",
   "websockets>=12",
   "itsdangerous>=2.2",
+  "cryptography>=42",
 ]
 
 [project.optional-dependencies]

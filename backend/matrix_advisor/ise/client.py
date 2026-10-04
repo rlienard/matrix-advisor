@@ -5,6 +5,7 @@ Endpoints used (ISE 3.x):
   GET/POST/PUT  /ers/config/sgacl[/{id}]
   GET/POST/PUT  /ers/config/egressmatrixcell[/{id}]
   GET           /api/v1/deployment/node
+  POST          /api/v1/certs/trusted-certificate/import   (only on an explicit request from the UI)
 The API account needs the ERS Admin role (read/write) and ERS must be enabled on the PAN.
 """
 
@@ -49,7 +50,7 @@ class ISEClient:
         self.http = httpx.AsyncClient(
             base_url=base,
             auth=(o.username, o.password),
-            verify=_verify(o.verify_tls, o.ca_cert),
+            verify=_verify(cfg.verify_tls, cfg.ca_cert),
             headers={"Accept": "application/json", "Content-Type": "application/json"},
             timeout=httpx.Timeout(20.0, connect=5.0),
         )
@@ -121,6 +122,22 @@ class ISEClient:
                 "pxgrid": any("pxgrid" in str(s).lower() for s in services) or any("pxgrid" in str(r).lower() for r in roles),
             })
         return out
+
+    async def import_trusted_certificate(self, name: str, pem: str, description: str) -> dict:
+        """Add a certificate to the ISE trusted store, trusted for client authentication (pxGrid).
+
+        Field names follow the ISE 3.x OpenAPI (TrustedCertificateImport); to check against the
+        Swagger of the target version. Needs an account with rights on certificates.
+        """
+        r = await self._request("POST", "/api/v1/certs/trusted-certificate/import", json={
+            "name": name, "description": description, "data": pem,
+            "trustForClientAuth": True, "allowBasicConstraintCAFalse": True,
+            "trustForIseAuth": False, "trustForCertificateBasedAdminAuth": False,
+            "trustForCiscoServicesAuth": False, "allowOutOfDateCert": False, "allowSHA1Certificates": False,
+            "validateCertificateExtensions": False,
+        })
+        data = r.json() if r.content else {}
+        return data.get("response", data) if isinstance(data, dict) else {}
 
     async def read_matrix(self, default: str = "deny") -> Matrix:
         sgt_items, acl_items, cell_items = await asyncio.gather(

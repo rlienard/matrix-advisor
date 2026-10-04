@@ -19,7 +19,7 @@ from collections.abc import Awaitable, Callable
 
 import httpx
 
-from ..config import PxGridConfig
+from ..config import ISEConfig, PxGridConfig
 from ..i18n import Message
 
 log = logging.getLogger(__name__)
@@ -34,23 +34,37 @@ class PxGridError(Exception):
     pass
 
 
-def _ssl(cfg: PxGridConfig) -> ssl.SSLContext | bool:
-    if not cfg.verify_tls and cfg.auth != "certificate":
+def _ssl(cfg: PxGridConfig, verify_tls: bool, ca_cert: str) -> ssl.SSLContext | bool:
+    if not verify_tls and cfg.auth != "certificate":
         return False
-    ctx = ssl.create_default_context(cafile=cfg.ca_cert or None)
-    if not cfg.verify_tls:
+    ctx = ssl.create_default_context(cafile=ca_cert or None)
+    if not verify_tls:
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
     if cfg.auth == "certificate" and cfg.client_cert:
-        ctx.load_cert_chain(cfg.client_cert, cfg.client_key or None)
+        ctx.load_cert_chain(cfg.client_cert, cfg.client_key or None, password=cfg.client_key_password or None)
     return ctx
 
 
+def pxgrid_client(ise: ISEConfig) -> PxGridClient | None:
+    """Client for the configured pxGrid node(s), with the ISE-wide TLS settings; None if not configured."""
+    px = ise.pxgrid
+    if not (px.node or px.base_url):
+        return None
+    return PxGridClient(px, verify_tls=ise.verify_tls, ca_cert=ise.ca_cert)
+
+
 class PxGridClient:
-    def __init__(self, cfg: PxGridConfig):
+    def __init__(self, cfg: PxGridConfig, verify_tls: bool = True, ca_cert: str = ""):
         self.cfg = cfg
-        self.base = cfg.base_url.rstrip("/") if cfg.base_url else f"https://{cfg.node}:{cfg.port}"
-        self._verify = _ssl(cfg)
+        self.verify_tls = verify_tls
+        if cfg.base_url:
+            self.bases = [cfg.base_url.rstrip("/")]
+        else:
+            nodes = [n for n in (cfg.node, cfg.secondary_node) if n]
+            self.bases = [f"https://{n}:{cfg.port}" for n in dict.fromkeys(nodes)]
+        self.base = self.bases[0] if self.bases else ""
+        self._verify = _ssl(cfg, verify_tls, ca_cert)
         self.password = cfg.password if cfg.auth == "password" else ""
         self.http = httpx.AsyncClient(verify=self._verify, timeout=httpx.Timeout(20.0, connect=5.0),
                                       headers={"Accept": "application/json", "Content-Type": "application/json"})
@@ -65,10 +79,22 @@ class PxGridClient:
         return (self.cfg.client_name, self.password)
 
     async def _control(self, op: str, body: dict, auth: bool = True) -> dict:
-        try:
-            r = await self.http.post(f"{self.base}/pxgrid/control/{op}", json=body, auth=self._auth if auth else None)
-        except httpx.HTTPError as e:
-            raise PxGridError(f"{op}: {e.__class__.__name__}: {e}") from e
+        # The current node first, then the other one (secondary node) if it cannot be reached.
+        order = [self.base] + [b for b in self.bases if b != self.base]
+        for i, base in enumerate(order):
+            try:
+                r = await self.http.post(f"{base}/pxgrid/control/{op}", json=body, auth=self._auth if auth else None)
+            except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+                if i + 1 < len(order):
+                    log.warning("pxGrid node %s unreachable (%s), trying %s", base, e.__class__.__name__, order[i + 1])
+                    continue
+                raise PxGridError(f"{op}: {e.__class__.__name__}: {e}") from e
+            except httpx.HTTPError as e:
+                raise PxGridError(f"{op}: {e.__class__.__name__}: {e}") from e
+            if base != self.base:
+                self.base = base
+                self._secrets.clear()  # secrets are per provider node
+            break
         if r.status_code == 401:
             raise PxGridError(Message("pxgrid_unauthorized", op=op, client=self.cfg.client_name))
         if r.status_code >= 400:
@@ -145,7 +171,7 @@ class PxGridClient:
         ssl_ctx = self._verify if isinstance(self._verify, ssl.SSLContext) else None
         if ws_url.startswith("wss") and ssl_ctx is None:
             ssl_ctx = ssl.create_default_context()
-            if not self.cfg.verify_tls:
+            if not self.verify_tls:
                 ssl_ctx.check_hostname = False
                 ssl_ctx.verify_mode = ssl.CERT_NONE
         async with websockets.connect(

@@ -65,8 +65,11 @@ def test_resolver_priorities():
     assert r.resolve("10.20.1.9") == "Employees"
     assert r.resolve("10.20.1.10") == "Web"
     assert r.resolve("10.20.9.1") == "Servers"
+    # Anything unclassified is SGT 0, internal or Internet alike: what the switch enforces on.
     assert r.resolve("10.99.0.1") == "Unknown"
-    assert r.resolve("198.51.100.7") == "Internet"
+    assert r.resolve("198.51.100.7") == "Unknown"
+    r.set_tags({0: "Unknown_SGT0", 4: "Employees"})
+    assert r.resolve("198.51.100.8") == "Unknown_SGT0"
 
 
 def test_exporter_filter():
@@ -147,7 +150,7 @@ def test_pipeline_prefers_sgt_from_flow_records(tmp_path):
     pipeline, rows = _pipeline(tmp_path, "auto")
     assert rows == [
         ("10.10.1.7", "Employees", "10.20.1.5", "Web_Servers"),
-        ("10.10.1.8", "Employees", "198.51.100.7", "Internet"),
+        ("10.10.1.8", "Employees", "198.51.100.7", "Unknown"),
         ("10.10.1.9", "Employees", "10.20.1.5", "Web_Servers"),
     ]
     assert (pipeline.stats["sgt_from_flow"], pipeline.stats["unknown_tag"]) == (2, 1)

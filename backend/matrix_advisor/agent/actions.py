@@ -75,7 +75,7 @@ class Actions:
             impacts = impact_of_change(m, base.id, _norm(final), observed, exclude=pair)
         names = {a.name for a in m.sgacls.values()}
         prefix = self.config.settings.ise.sgacl_prefix
-        default_mode = "clone" if others else "inplace"
+        default_mode = "clone" if others or (base and base.read_only) else "inplace"
         return {
             "acl": final,
             "validation": validation,
@@ -85,7 +85,8 @@ class Actions:
             "others": [{"src": s, "dst": d} for s, d in others],
             "impacts": impacts,
             "default_mode": default_mode,
-            "inplace_allowed": not impacts,
+            # A read-only contract (ISE built-ins such as Permit IP) can only be cloned.
+            "inplace_allowed": not impacts and not (base and base.read_only),
             "clone_name": clone_name(prefix, base.name, p["src"], names) if base else None,
             "new_name": new_contract_name(prefix, p["src"], p["dst"], names),
             "write_mode": self.config.settings.ise.write_mode,
@@ -170,7 +171,7 @@ class Actions:
             base = m.sgacls.get(p.get("base_sgacl_id") or "")
             result: dict = {"cell_status": cell_status}
             try:
-                if p["kind"] == "new":
+                if p["kind"] == "new" or (p["kind"] == "unknown" and not base):
                     name = info["new_name"]
                     sid = await client.create_sgacl(name, final, desc)
                     ids = existing + [sid]

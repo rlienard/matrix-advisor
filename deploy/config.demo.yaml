@@ -6,7 +6,6 @@ llm:
   provider: ollama
   endpoint: http://ollama:11434
   model: qwen2.5:14b
-  temperature: 0.1
   timeout_s: 120
   trigger: event
   learning_days: 0

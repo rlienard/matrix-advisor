@@ -4,9 +4,10 @@ ui:
 
 llm:
   provider: ollama
+  location: local               # Ollama on the Mac: reached as host.lima.internal from the container
+  port: 11434
   endpoint: http://host.lima.internal:11434
   model: qwen2.5:7b
-  temperature: 0.1
   timeout_s: 120
   trigger: event
   learning_days: 0

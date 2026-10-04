@@ -1,6 +1,6 @@
 export type Range = "24h" | "7d" | "30d";
 export type LinkStatus = "allowed" | "partial" | "pending" | "rejected";
-export type Kind = "extend" | "reuse" | "new" | "external";
+export type Kind = "extend" | "reuse" | "new" | "unknown" | "external";
 export type Risk = "low" | "medium" | "high";
 
 export interface Contract {
@@ -98,6 +98,8 @@ export interface Proposal {
     ports: { spec: string; flows: number; hosts: number }[];
     heuristics: string[];
     new_name: string;
+    egress_firewall?: boolean;
+    dst_unknown?: boolean;
   };
   status: "pending" | "approved" | "rejected" | "superseded";
   mode: "clone" | "inplace" | null;
@@ -123,8 +125,10 @@ export interface Analysis {
 }
 
 export interface Status {
-  netflow: { online: boolean; last_record: string | null; flows_per_s: number };
+  netflow: { online: boolean; last_record: string | null; flows_per_s: number; stale_after_seconds: number };
   ise: {
+    pan: string;
+    reconcile_minutes: number;
     online: boolean;
     last_sync: string | null;
     last_error: string | null;
@@ -132,7 +136,16 @@ export interface Status {
     cell_count: number;
     pxgrid: { state: string; error: string | null; mode: string | null };
   };
-  llm: { online: boolean | null; provider: string; model: string; cloud: boolean; error: string | null };
+  llm: {
+    online: boolean | null;
+    provider: string;
+    model: string;
+    cloud: boolean;
+    location: "local" | "remote";
+    endpoint: string;
+    timeout_s: number;
+    error: string | null;
+  };
   learning: Learning;
   observation: Observation;
   write_mode: "monitor" | "enforce";
@@ -144,6 +157,8 @@ export interface Config {
   ui: { language: "fr" | "en" };
   llm: {
     provider: "ollama" | "openai" | "anthropic" | "azure";
+    location: "local" | "remote";
+    port: number;
     endpoint: string;
     model: string;
     api_key: string;
@@ -157,18 +172,24 @@ export interface Config {
   };
   ise: {
     pan: string;
-    openapi: { base_url: string; username: string; password: string; port: number; verify_tls: boolean; ca_cert: string };
+    verify_tls: boolean;
+    ca_cert: string;
+    openapi: { base_url: string; username: string; password: string; port: number };
     pxgrid: {
       node: string;
+      secondary_node: string;
       base_url: string;
       client_name: string;
       auth: "certificate" | "password";
+      cert_mode: "generate" | "upload";
+      cert_cn: string;
+      cert_days: number;
+      import_to_ise_trust: boolean;
       client_cert: string;
       client_key: string;
-      ca_cert: string;
+      client_key_password: string;
       password: string;
       port: number;
-      verify_tls: boolean;
       subscribe: boolean;
       poll_seconds: number;
     };
@@ -176,6 +197,7 @@ export interface Config {
     sgacl_prefix: string;
     reconcile_minutes: number;
     matrix_default: "deny" | "permit";
+    egress_firewall: boolean;
     static_bindings: Record<string, string>;
   };
   collector: {
@@ -194,4 +216,39 @@ export interface Config {
     sgt_source: "auto" | "ip";
   };
   server?: Record<string, unknown>;
+}
+
+// Certificate details returned by the API (never the private key).
+export interface CertInfo {
+  subject: string;
+  issuer: string;
+  self_signed: boolean;
+  not_after: string;
+  days_left: number;
+  sha256: string;
+  path?: string;
+  chain_length?: number;
+}
+
+export interface TrustImport {
+  status: "ok" | "failed" | "skipped";
+  error?: string;
+  pan?: string;
+  name?: string;
+}
+
+export interface LlmModel {
+  name: string;
+  size: number;
+  parameters: string;
+  quantization: string;
+  loaded: boolean;
+}
+
+export interface IseNode {
+  fqdn: string;
+  ip: string;
+  roles: string[];
+  services: string[];
+  pxgrid: boolean;
 }

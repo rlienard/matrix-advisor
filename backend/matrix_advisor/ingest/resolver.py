@@ -6,7 +6,8 @@ Otherwise the address is resolved from these sources, by priority:
 1. Active endpoint sessions from pxGrid (exact IP -> SGT, e.g. 802.1X / MAB users).
 2. IP-SGT bindings (pxGrid SXP service, ISE static mappings) as prefixes.
 3. Static bindings from the configuration.
-Anything else is ``Internet`` (public address) or ``Unknown`` (private address).
+Anything else is ``Unknown``: SGT 0, the tag the switches enforce for an unclassified address
+(Internet destinations, unmapped hosts).
 
 Resolution happens here, in the deterministic layer: IP addresses never reach the LLM.
 """
@@ -16,16 +17,7 @@ from __future__ import annotations
 import ipaddress
 import threading
 
-from ..policy.matrix import INTERNET, UNKNOWN
-
-INTERNAL_NETS = [ipaddress.ip_network(n) for n in (
-    "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16", "127.0.0.0/8",
-    "fc00::/7", "fe80::/10", "::1/128",
-)]
-
-
-def is_internal(addr: ipaddress._BaseAddress) -> bool:
-    return any(addr.version == n.version and addr in n for n in INTERNAL_NETS)
+from ..policy.matrix import UNKNOWN, UNKNOWN_VALUE
 
 
 class SGTResolver:
@@ -96,13 +88,13 @@ class SGTResolver:
                 try:
                     addr = ipaddress.ip_address(ip)
                 except ValueError:
-                    return UNKNOWN
+                    return self._tags.get(UNKNOWN_VALUE, UNKNOWN)
                 for table in (self._prefixes, self._static):
                     sgt = next((name for net, name in table if addr in net), None)
                     if sgt:
                         break
                 if sgt is None:
-                    sgt = UNKNOWN if is_internal(addr) else INTERNET
+                    sgt = self._tags.get(UNKNOWN_VALUE, UNKNOWN)
             if len(self._cache) > 500_000:
                 self._cache.clear()
             self._cache[ip] = sgt

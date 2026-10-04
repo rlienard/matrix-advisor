@@ -17,10 +17,10 @@ from ..i18n import message_of
 from ..ise.service import ISEService
 from ..policy import acl
 from ..policy.impact import new_contract_name
-from ..policy.matrix import PSEUDO_GROUPS, Matrix
+from ..policy.matrix import Matrix
 from ..store import Store, utcnow
 from . import prompts, risk
-from .llm import LLMClient, LLMError
+from .llm import LLMClient, LLMError, PrivacyViolation
 
 log = logging.getLogger(__name__)
 
@@ -44,16 +44,30 @@ class LLMHolder:
             self.client = LLMClient(new.llm)
             self.status.update(online=None, error=None)
 
+    def mark(self, error: Exception | None = None, latency_ms: int | None = None) -> None:
+        """Record the outcome of a call to the model (health check or real use).
+
+        A call that gets no answer before the timeout turns the status red at once; the next
+        answer turns it green again.
+        """
+        was_online = self.status["online"]
+        if error is None:
+            self.status.update(online=True, error=None)
+            if latency_ms is not None:
+                self.status["latency_ms"] = latency_ms
+            if not was_online and self.on_online:
+                self.on_online()
+        else:
+            self.status.update(online=False, error=message_of(error))
+        self.status["last_check"] = utcnow()
+
     async def check(self) -> None:
         try:
             res = await self.client.ping()
-            was_online = self.status["online"]
-            self.status.update(online=True, error=None, latency_ms=res["latency_ms"])
-            if not was_online and self.on_online:
-                self.on_online()
         except LLMError as e:
-            self.status.update(online=False, error=message_of(e))
-        self.status["last_check"] = utcnow()
+            self.mark(e)
+            return
+        self.mark(latency_ms=res["latency_ms"])
 
     async def run(self) -> None:
         while True:
@@ -175,13 +189,25 @@ class Advisor:
         specs = [p["spec"] for p in obs["ports"]]
         base = None
         mode = None
-        if src in PSEUDO_GROUPS or dst in PSEUDO_GROUPS:
-            kind, proposed = "external", ""
+        to_unknown = dst == m.unknown_name
+        firewall = settings.ise.egress_firewall
+        if not m.sgt_by_name(src) or not m.sgt_by_name(dst):
+            kind, proposed = "external", ""  # no SGT in ISE on one side: no cell can carry it
         elif cov["status"] == "partial" and (base := self._choose_base(m, src, dst)):
             kind = "extend"
             proposed = acl.extend(base.content, cov["uncovered"])
             others = [p for p in m.contract_users(base.id) if p != (src, dst)]
             mode = "clone" if others else "inplace"
+        elif to_unknown:
+            # SGT 0 is mostly Internet-bound traffic. Behind an egress firewall, which does the fine
+            # filtering, the cell stays permissive (the built-in Permit IP when ISE has it); without
+            # one, the matrix is the only control: least privilege as for any other pair.
+            kind = "unknown"
+            if firewall:
+                base = m.permit_ip()
+                proposed = base.content if base else "permit ip"
+            else:
+                proposed = acl.generate(specs, log=True)
         elif base := self._reusable(m, specs, dst):
             kind, proposed = "reuse", base.content
         else:
@@ -196,6 +222,8 @@ class Advisor:
             "behaviour": self.store.pair_behaviour(src, dst, utcnow() - timedelta(days=7)),
             "activity": obs.get("activity") or {},
             "cell_contracts": cov["contracts"],
+            "src_unknown": src == m.unknown_name, "dst_unknown": to_unknown,
+            "egress_firewall": firewall,
         }
         lang = settings.ui.language
         assessment = risk.assess(features, lang)
@@ -223,7 +251,10 @@ class Advisor:
             )
         except LLMError as e:
             log.info("LLM unavailable, heuristic proposal kept: %s", e)
+            if not isinstance(e, PrivacyViolation):
+                self.llm.mark(e)
             return proposal
+        self.llm.mark()
         llm_risk = out.get("risk") if out.get("risk") in RISK_ORDER else proposal["risk"]
         # Heuristics are a floor: the model may raise the risk, never lower it.
         final = max(llm_risk, proposal["risk"], key=RISK_ORDER.index)
@@ -293,7 +324,10 @@ class Advisor:
                                                       json.dumps({"justification": text}, ensure_ascii=False))
         except LLMError as e:
             log.info("LLM unavailable, translation postponed: %s", e)
+            if not isinstance(e, PrivacyViolation):
+                self.llm.mark(e)
             return None
+        self.llm.mark()
         text = out.get("justification")
         return text.strip() if isinstance(text, str) and text.strip() else None
 

@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
+import re
+
 from .matrix import Matrix
+
+
+def _ident(name: str) -> str:
+    """SGACL names: letters, digits and _ only (ISE built-ins such as "Permit IP" have a space)."""
+    return re.sub(r"[^A-Za-z0-9_]", "_", name)
 
 
 def impact_of_change(
@@ -30,17 +37,17 @@ def impact_of_change(
 
 
 def clone_name(prefix: str, base: str, src: str, existing: set[str]) -> str:
-    stem = base if base.startswith(prefix) else prefix + base
-    name = f"{stem}_{src}"
+    stem = _ident(base if base.startswith(prefix) else prefix + base)
+    name = f"{stem}_{_ident(src)}"
     n = 2
     while name in existing:
-        name = f"{stem}_{src}_{n}"
+        name = f"{stem}_{_ident(src)}_{n}"
         n += 1
     return name
 
 
 def new_contract_name(prefix: str, src: str, dst: str, existing: set[str]) -> str:
-    name = f"{prefix}{src}_to_{dst}"
+    name = _ident(f"{prefix}{src}_to_{dst}")
     n = 2
     candidate = name
     while candidate in existing:
