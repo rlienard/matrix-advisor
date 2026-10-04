@@ -6,6 +6,7 @@ import base64
 import os
 import stat
 from datetime import timedelta
+from pathlib import Path
 
 import httpx
 import pytest
@@ -55,7 +56,7 @@ def _app(sim_url, tmp_path, firewall=True, extra_flows=None):
 
 @pytest.fixture()
 def unknown_fw(sim_url, tmp_path):
-    ctx, app = _app(sim_url, tmp_path, firewall=True)
+    _ctx, app = _app(sim_url, tmp_path, firewall=True)
     with TestClient(app) as c:
         assert c.post("/api/auth/login", json={"password": "secret"}).status_code == 200
         assert c.post("/api/ise/sync").status_code == 200
@@ -256,7 +257,7 @@ def test_generate_certificate_and_import_into_ise_trust(unknown_fw, tmp_path):
     assert out["trust_import"]["status"] == "ok" and out["info"]["subject"] == "ma-pxgrid"
     assert 363 <= out["info"]["days_left"] <= 365 and len(out["info"]["sha256"].split(":")) == 32
     assert stat.S_IMODE(os.stat(out["client_key"]).st_mode) == 0o600
-    cert = x509.load_pem_x509_certificate(open(out["client_cert"], "rb").read())
+    cert = x509.load_pem_x509_certificate(Path(out["client_cert"]).read_bytes())
     assert cert.extensions.get_extension_for_class(x509.BasicConstraints).value.ca is False
     trusted = httpx.get(unknown_fw.sim + "/api/v1/certs/trusted-certificate",
                         auth=("matrix-advisor", "demo-password")).json()["response"]
@@ -292,11 +293,11 @@ def _self_signed(cn="ise-root"):
 
 def test_upload_certificates(unknown_fw):
     cert, key = _self_signed()
-    b64 = lambda data: base64.b64encode(data).decode()  # noqa: E731
+    b64 = lambda data: base64.b64encode(data).decode()
     pem = cert.public_bytes(serialization.Encoding.PEM)
     r = unknown_fw.post("/api/ise/certificates/upload", json={"kind": "ca", "filename": "ise root.pem", "data": b64(pem)})
     assert r.status_code == 200 and r.json()["info"]["subject"] == "ise-root"
-    assert open(r.json()["path"], "rb").read() == pem
+    assert Path(r.json()["path"]).read_bytes() == pem
     der = cert.public_bytes(serialization.Encoding.DER)
     assert unknown_fw.post("/api/ise/certificates/upload",
                            json={"kind": "client_cert", "filename": "c.cer", "data": b64(der)}).status_code == 200
