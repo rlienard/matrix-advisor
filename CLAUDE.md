@@ -88,6 +88,14 @@ MA_CONFIG_TEMPLATE=/app/deploy/config.demo.yaml docker compose --profile demo --
   are permissive (`Permit IP`) only when `ise.egress_firewall` is on; read-only contracts are cloned, never
   modified.
 
+## Workflow
+
+- Never push to `main`. Every change, documentation included, goes on a branch (`claude/<topic>`) and
+  through a pull request that the author reviews and merges. Run the backend and frontend checks above
+  before opening it.
+- The Lima demo (`deploy/lima/lima-demo.sh`) pulls `main`: a change reaches the local test VM once its
+  PR is merged.
+
 ## Conventions
 
 - Code, comments, README, commit messages: **English**. UI strings and user-facing API messages exist in
