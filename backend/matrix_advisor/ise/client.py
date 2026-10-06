@@ -189,6 +189,9 @@ class ISEClient:
                 return self._cell(c)
         return None
 
+    async def read_cell(self, cell_id: str) -> Cell:
+        return self._cell(await self._get("egressmatrixcell", cell_id, "EgressMatrixCell"))
+
     async def fresh_sgacl(self, sgacl_id: str) -> Sgacl:
         a = await self._get("sgacl", sgacl_id, "Sgacl")
         return Sgacl(a["id"], a["name"], a.get("aclcontent", ""), a.get("description", ""),

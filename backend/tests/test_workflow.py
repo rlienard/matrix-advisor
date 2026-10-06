@@ -300,3 +300,26 @@ def test_store_does_not_overwrite_a_concurrent_decision(client):
     client.post(f"/api/proposals/{p['id']}/reject")
     assert store.save_proposal_if_unchanged({**p, "justification": "late"}, p["updated_at"]) is None
     assert store.proposal(p["id"])["status"] == "rejected"
+
+
+def test_approval_rereads_only_the_written_cell(client):
+    ctx = client.app.state.ctx
+    calls = {"full": 0, "requested": 0}
+    read_matrix, request = ctx.ise.client.read_matrix, ctx.ise.request_reconcile
+
+    async def counting_read_matrix(*a, **kw):
+        calls["full"] += 1
+        return await read_matrix(*a, **kw)
+
+    def counting_request():
+        calls["requested"] += 1
+        request()
+
+    ctx.ise.client.read_matrix, ctx.ise.request_reconcile = counting_read_matrix, counting_request
+    p = _props(client)[("Contractors", "Finance_DB")]
+    assert client.post(f"/api/proposals/{p['id']}/approve", json={}).status_code == 200
+    # The cache is exact for the pair at once; the full read is left to the debounced loop.
+    assert calls == {"full": 0, "requested": 1}
+    cell = ctx.ise.matrix.cell("Contractors", "Finance_DB")
+    assert cell and [ctx.ise.matrix.sgacls[i].name for i in cell.sgacl_ids] == [p["features"]["new_name"]]
+    assert ctx.ise.matrix.coverage("Contractors", "Finance_DB", p["specs"])["status"] == "allowed"
