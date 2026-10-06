@@ -28,6 +28,7 @@ backend/matrix_advisor/
   agent/               advisor.py (proposals), risk.py (heuristics), llm.py (providers + IP guard), prompts.py,
                        actions.py (approve/reject/edit and ISE writes)
   api/                 routes.py (REST), auth.py (single admin, signed cookie)
+  ops.py               Prometheus /metrics (MA_METRICS_TOKEN) and scheduled backups (MA_BACKUP_*)
   main.py              wiring, background workers, static UI
 backend/tests/         pytest; test_workflow.py runs the full flow against the ISE simulator, test_pxgrid_ws.py the
                        STOMP subscription; fixtures/acl_parity.json is shared with frontend/tests
@@ -36,6 +37,7 @@ frontend/src/          React + TS: components/{Dashboard,Sankey,Trend,PairPanel,
 simulators/ise_sim/    fake ISE (ERS, deployment nodes, pxGrid REST + STOMP pubsub, /sim/conflict|session|reset|state)
 simulators/flowgen/    IPFIX generator with the demo scenarios (no dependencies; --sgt adds CTS group tags)
 deploy/                config templates (example, demo, lima), goflow2/mapping.yaml, lima/lima-demo.sh,
+                       tls/ (Caddy HTTPS override), prometheus/ (scrape config, alert rules); see docs/operations.md,
                        lima/update.sh (continuous deployment of main in the VM)
 ```
 

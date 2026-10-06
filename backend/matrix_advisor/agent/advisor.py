@@ -82,6 +82,7 @@ class Advisor:
         self.ise = ise
         self.llm = llm
         self.last_run: datetime | None = None
+        self.last_duration_s: float | None = None
         self._wake = asyncio.Event()
         llm.on_online = self.wake
         config.on_change(self._on_change)
@@ -280,6 +281,7 @@ class Advisor:
         """Create or refresh proposals for uncovered pairs. Returns the number created."""
         if self.ise.matrix.synced_at is None:
             return 0
+        started = utcnow()
         # Database scans run in a worker thread: the event loop keeps serving the API meanwhile.
         views = await asyncio.to_thread(self.pair_views, utcnow() - self.analysis_window())
         allowed = sum(1 for v in views if v["coverage"]["status"] == "allowed")
@@ -321,6 +323,7 @@ class Advisor:
             log.info("proposal %s %s -> %s (%s, risk %s)", proposal["kind"], src, dst,
                      ",".join(proposal["specs"]), proposal["risk"])
         await self.refresh_open(MAX_LLM_CALLS_PER_RUN - llm_calls)
+        self.last_duration_s = round((utcnow() - started).total_seconds(), 3)
         self.last_run = utcnow()
         return created
 

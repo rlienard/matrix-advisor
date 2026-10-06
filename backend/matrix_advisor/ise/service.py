@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import logging
+import time
 from datetime import UTC, datetime
 
 from ..config import ConfigStore
@@ -65,6 +66,7 @@ class ISEService:
 
     async def reconcile(self) -> Matrix:
         ise = self.config.settings.ise
+        started = time.monotonic()
         try:
             m = await self.client.read_matrix(default=ise.matrix_default)
         except ISEError as e:
@@ -72,7 +74,8 @@ class ISEService:
             raise
         self.matrix = m
         self.resolver.set_tags({s.value: s.name for s in m.sgts.values()})
-        self.status.update(online=True, last_sync=m.synced_at, last_error=None)
+        self.status.update(online=True, last_sync=m.synced_at, last_error=None,
+                           last_duration_s=round(time.monotonic() - started, 3))
         log.info("ISE matrix synced: %d SGT, %d SGACL, %d cells", len(m.sgts), len(m.sgacls), len(m.cells))
         return m
 

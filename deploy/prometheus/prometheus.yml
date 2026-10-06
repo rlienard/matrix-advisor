@@ -1,0 +1,17 @@
+# Example scrape configuration. MA_METRICS_TOKEN must be set on the matrix-advisor container.
+global:
+  scrape_interval: 30s
+rule_files:
+  - alerts.yml
+scrape_configs:
+  - job_name: matrix-advisor
+    authorization:
+      credentials_file: /etc/prometheus/ma_metrics_token   # same value as MA_METRICS_TOKEN
+    static_configs:
+      - targets: ["matrix-advisor:8000"]
+  - job_name: goflow2        # GoFlow2's own metrics (decoding, per-exporter traffic)
+    static_configs:
+      - targets: ["goflow2:8080"]
+  - job_name: node           # node_exporter on the collector host: kernel UDP receive drops
+    static_configs:
+      - targets: ["collector-host:9100"]

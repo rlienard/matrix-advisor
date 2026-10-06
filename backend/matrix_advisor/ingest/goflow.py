@@ -60,6 +60,16 @@ class NDJSONTailer:
             st = os.stat(path)
             self.inode, self.offset = st.st_ino, st.st_size
 
+    def lag_bytes(self) -> int:
+        """Bytes written by GoFlow2 and not read yet (a backlog that grows means ingest falls behind)."""
+        try:
+            st = os.stat(self.path)
+        except FileNotFoundError:
+            return 0
+        if self.inode is not None and st.st_ino != self.inode:
+            return st.st_size
+        return max(st.st_size - self.offset, 0)
+
     def read(self, max_lines: int = 200_000) -> list[bytes]:
         try:
             st = os.stat(self.path)

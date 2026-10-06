@@ -32,6 +32,7 @@ class IngestPipeline:
         self._last_flush = time.monotonic()
         self._last_rollup = 0.0
         self._last_retention = 0.0
+        self.last_tick_s: float | None = None
         self.stats = {
             "records": 0, "dropped_exporter": 0, "malformed": 0, "concatenated_lines": 0,
             "sgt_from_flow": 0, "unknown_tag": 0,
@@ -49,6 +50,7 @@ class IngestPipeline:
     def tick(self) -> int:
         if not self.ready() and time.monotonic() - self._started < CONTEXT_WAIT_S:
             return 0
+        started = time.monotonic()
         lines = self._tailer.read()
         use_tags = self.config.settings.collector.sgt_source == "auto"
         rows = []
@@ -74,7 +76,11 @@ class IngestPipeline:
         n = self.store.ingest(rows)
         self.stats["records"] += n
         self._housekeeping()
+        self.last_tick_s = time.monotonic() - started
         return n
+
+    def lag_bytes(self) -> int:
+        return self._tailer.lag_bytes()
 
     def _sgt(self, tag: int | None, ip: str, use_tags: bool) -> str:
         """SGT name of one side of a flow: the exported tag when ISE knows it, else the IP resolver."""

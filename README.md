@@ -187,6 +187,15 @@ environment variables, which always win. Uploaded and generated certificates go 
 To keep everything on-prem, run Ollama or vLLM on a GPU host next to Matrix Advisor
 (`docker compose --profile llm up -d` runs Ollama on the same host).
 
+### 4. Operate it
+
+HTTPS (Caddy in front, the application port no longer published), Prometheus metrics and alerts, and
+daily backups are described in [docs/operations.md](docs/operations.md):
+
+```bash
+MA_DOMAIN=matrix-advisor.example.net docker compose -f docker-compose.yml -f deploy/tls/docker-compose.tls.yml up -d
+```
+
 ## Configuration reference
 
 See [deploy/config.example.yaml](deploy/config.example.yaml). Main keys:

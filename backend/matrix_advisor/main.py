@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import os
 import secrets
@@ -11,9 +12,9 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
@@ -24,6 +25,7 @@ from .config import ConfigStore, default_config_path
 from .ingest.pipeline import IngestPipeline
 from .ingest.resolver import SGTResolver
 from .ise.service import ISEService
+from .ops import Backups, metrics_text
 from .store import Store
 
 log = logging.getLogger("matrix_advisor")
@@ -77,6 +79,7 @@ def _first_run_secrets(config: ConfigStore) -> None:
 
 def create_app(context: Context | None = None, start_workers: bool = True) -> FastAPI:
     ctx = context or build_context()
+    backups = Backups.from_env(ctx)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -88,6 +91,8 @@ def create_app(context: Context | None = None, start_workers: bool = True) -> Fa
                 asyncio.create_task(ctx.llm.run(), name="llm"),
                 asyncio.create_task(ctx.advisor.run(), name="advisor"),
             ]
+            if backups:
+                tasks.append(asyncio.create_task(backups.run(), name="backups"))
         yield
         for t in tasks:
             t.cancel()
@@ -97,6 +102,7 @@ def create_app(context: Context | None = None, start_workers: bool = True) -> Fa
 
     app = FastAPI(title="Matrix Advisor", version=__version__, lifespan=lifespan)
     app.state.ctx = ctx
+    app.state.backups = backups
     origins = ctx.config.settings.server.cors_origins
     if origins:
         app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True,
@@ -106,6 +112,17 @@ def create_app(context: Context | None = None, start_workers: bool = True) -> Fa
     @app.get("/healthz")
     def healthz():
         return {"ok": True, "version": __version__}
+
+    @app.get("/metrics", include_in_schema=False)
+    def metrics(request: Request):
+        # Off unless MA_METRICS_TOKEN is set; then a bearer token is required (Prometheus authorization).
+        token = os.environ.get("MA_METRICS_TOKEN", "")
+        if not token:
+            raise HTTPException(status_code=404)
+        given = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        if not hmac.compare_digest(given.encode(), token.encode()):
+            raise HTTPException(status_code=401)
+        return PlainTextResponse(metrics_text(ctx, backups), media_type="text/plain; version=0.0.4")
 
     static = os.environ.get("MA_STATIC_DIR")
     if static and Path(static, "index.html").exists():
@@ -127,8 +144,10 @@ def run() -> None:
     logging.basicConfig(level=os.environ.get("MA_LOG_LEVEL", "INFO"),
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    # Behind the HTTPS reverse proxy, trust its X-Forwarded-Proto so that the session cookie is marked Secure.
     uvicorn.run(create_app(), host=os.environ.get("MA_HOST", "0.0.0.0"), port=int(os.environ.get("MA_PORT", "8000")),
-                log_level=os.environ.get("MA_LOG_LEVEL", "info").lower())
+                log_level=os.environ.get("MA_LOG_LEVEL", "info").lower(), proxy_headers=True,
+                forwarded_allow_ips=os.environ.get("MA_FORWARDED_ALLOW_IPS", "127.0.0.1"))
 
 
 if __name__ == "__main__":

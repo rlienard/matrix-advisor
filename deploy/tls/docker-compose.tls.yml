@@ -1,0 +1,29 @@
+# HTTPS reverse proxy. The application port is no longer published: only Caddy (443, and 80 for the
+# redirect and ACME) is reachable from outside.
+#   docker compose -f docker-compose.yml -f deploy/tls/docker-compose.tls.yml up -d
+# Requires Docker Compose 2.24 or later (!reset).
+services:
+  matrix-advisor:
+    ports: !reset []
+    environment:
+      # Caddy is the only client: trust its X-Forwarded-Proto so the session cookie is marked Secure.
+      MA_FORWARDED_ALLOW_IPS: "*"
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "443:443"
+      - "80:80"
+    environment:
+      MA_DOMAIN: ${MA_DOMAIN:-localhost}
+      MA_TLS: ${MA_TLS:-internal}
+    volumes:
+      - ./deploy/tls/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/certs:ro
+      - caddy_data:/data
+    depends_on:
+      - matrix-advisor
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
