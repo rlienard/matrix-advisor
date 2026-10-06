@@ -114,7 +114,10 @@ class _Store:
     def flush_parquet(self):
         return None
 
-    def rollup_daily(self):
+    def compact(self):
+        pass
+
+    def rollup_daily(self, day=None):
         pass
 
     def apply_retention(self, days):
