@@ -196,9 +196,10 @@ class Actions:
             except ISEError as e:
                 raise ActionError(Message("ise_write_refused", error=message_of(e)), 502) from e
             try:
-                await self.ise.reconcile()
-            except ISEError:
-                self.ise.request_reconcile()
+                await self.ise.refresh_written(p["src"], p["dst"], cell_id)
+            except ISEError as e:
+                log.warning("re-reading the written cell failed, waiting for the full reconciliation: %s", e)
+            self.ise.request_reconcile()
 
         p = self.store.save_proposal({
             **p, "status": "approved", "decided_at": utcnow(), "decided_by": actor, "mode": mode,

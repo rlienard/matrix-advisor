@@ -179,3 +179,27 @@ def test_pipeline_keeps_flows_from_concatenated_lines(tmp_path):
     assert [r[2] for r in store.rows] == ["10.10.1.7", "10.10.1.8", "10.10.1.9"]
     assert pipeline.stats["concatenated_lines"] == 1
     assert pipeline.stats["malformed"] == 2  # the broken tail and the non-object record
+
+
+def test_resolver_longest_prefix_and_ipv6():
+    r = SGTResolver()
+    r.set_bindings({"10.0.0.0/8": "Campus", "10.20.0.0/16": "Servers", "10.20.1.128/25": "Web",
+                    "2001:db8::/32": "V6", "2001:db8:1::/48": "V6_Web", "bad": "x"})
+    assert [r.resolve(ip) for ip in ("10.20.1.200", "10.20.1.5", "10.9.9.9", "11.0.0.1")] == \
+        ["Web", "Servers", "Campus", "Unknown"]
+    assert (r.resolve("2001:db8:1::5"), r.resolve("2001:db8:2::5")) == ("V6_Web", "V6")
+    assert r.counts()["bindings"] == 5
+
+
+def test_session_event_invalidates_only_the_addresses_it_names():
+    r = SGTResolver()
+    r.set_static({"10.1.0.0/16": "Employees"})
+    r.set_tags({0: "Unknown"})
+    for ip in ("10.1.0.1", "10.1.0.2", "10.9.0.1"):
+        r.resolve(ip)
+    r.update_sessions({"10.1.0.1": "Contractors"}, removed=["10.1.0.2"])
+    assert set(r._cache) == {"10.9.0.1"}
+    assert r.resolve("10.1.0.1") == "Contractors" and r.resolve("10.1.0.2") == "Employees"
+    # SGT 0 renamed in ISE: cached unclassified addresses follow.
+    r.set_tags({0: "Unknown_SGT0"})
+    assert r.resolve("10.9.0.1") == "Unknown_SGT0"

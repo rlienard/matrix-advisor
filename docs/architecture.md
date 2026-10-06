@@ -47,6 +47,11 @@
   When the websocket is not reachable, the service polls every `poll_seconds`.
 - **Reconciliation** (`service.py`): the matrix cache is rebuilt from scratch every
   `reconcile_minutes`, on change notification, after each write and on demand from the UI.
+  Requests are debounced: a burst (pxGrid notifications, bulk approvals) leads to one full read,
+  5 s after the last request and at most 30 s after the first. After a write, the cell written and
+  its SGACLs are re-read at once, so the cache is exact for that pair before the full read.
+- **IP → SGT resolver** (`ingest/resolver.py`): prefixes are indexed by length (one dictionary probe per
+  distinct length); a pxGrid session event evicts only the addresses it names from the lookup cache.
 
 ## Coverage
 

@@ -21,6 +21,12 @@ from .pxgrid import PxGridError, pxgrid_client, sessions_to_mapping
 log = logging.getLogger(__name__)
 
 
+# A burst of change notifications (or of approvals) leads to one full read: wait until requests stop
+# for DEBOUNCE_S, but never longer than MAX_DELAY_S after the first one.
+DEBOUNCE_S = 5.0
+MAX_DELAY_S = 30.0
+
+
 def _now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
@@ -70,6 +76,19 @@ class ISEService:
         log.info("ISE matrix synced: %d SGT, %d SGACL, %d cells", len(m.sgts), len(m.sgacls), len(m.cells))
         return m
 
+    async def refresh_written(self, src: str, dst: str, cell_id: str) -> Matrix:
+        """Re-read from ISE the cell just written and the SGACLs it references.
+
+        Done after every write so that the cache is exact at once for that pair, without waiting for
+        the (debounced) full reconciliation, which still follows to pick up any other change.
+        """
+        client, m = self.client, self.matrix
+        cell = await client.read_cell(cell_id)
+        sgacls = await asyncio.gather(*(client.fresh_sgacl(i) for i in cell.sgacl_ids))
+        self.matrix = Matrix(sgts=m.sgts, sgacls={**m.sgacls, **{a.id: a for a in sgacls}},
+                             cells={**m.cells, (src, dst): cell}, default=m.default, synced_at=m.synced_at)
+        return self.matrix
+
     # ------------------------------------------------------------ loops
     async def run(self) -> None:
         await asyncio.gather(self._reconcile_loop(), self._pxgrid_loop())
@@ -89,7 +108,19 @@ class ISEService:
                 await asyncio.wait_for(self._wait_any(), timeout=wait)
             except TimeoutError:
                 pass
+            if self._reconcile_now.is_set() and not self._restart.is_set():
+                await self._debounce()
             self._reconcile_now.clear()
+
+    async def _debounce(self) -> None:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + MAX_DELAY_S
+        while (remaining := deadline - loop.time()) > 0:
+            self._reconcile_now.clear()
+            try:
+                await asyncio.wait_for(self._reconcile_now.wait(), timeout=min(DEBOUNCE_S, remaining))
+            except TimeoutError:
+                return
 
     async def _wait_any(self) -> None:
         reconcile = asyncio.create_task(self._reconcile_now.wait())
