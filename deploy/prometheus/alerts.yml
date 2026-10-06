@@ -1,0 +1,37 @@
+groups:
+  - name: matrix-advisor
+    rules:
+      - alert: MatrixAdvisorNoFlows
+        expr: ma_last_record_age_seconds > 300
+        for: 5m
+        annotations:
+          summary: No flow record received for 5 minutes (switches, GoFlow2 or ingest stopped).
+      - alert: MatrixAdvisorIngestBacklog
+        expr: ma_ingest_lag_bytes > 256e6 and deriv(ma_ingest_lag_bytes[15m]) > 0
+        for: 15m
+        annotations:
+          summary: Ingest falls behind GoFlow2; the flow file keeps growing.
+      - alert: MatrixAdvisorUdpDrops
+        expr: rate(node_netstat_Udp_RcvbufErrors[5m]) > 0
+        for: 10m
+        annotations:
+          summary: The kernel drops NetFlow/IPFIX packets (socket buffer full); raise net.core.rmem_max or add collectors.
+      - alert: MatrixAdvisorIseUnreachable
+        expr: ma_ise_online == 0 or ma_ise_last_sync_age_seconds > 3600
+        for: 15m
+        annotations:
+          summary: The ISE matrix has not been read for an hour; proposals use a stale cache.
+      - alert: MatrixAdvisorPxGridDown
+        expr: ma_pxgrid_configured == 1 and ma_pxgrid_online == 0
+        for: 15m
+        annotations:
+          summary: pxGrid context is not loaded; addresses fall back to SXP/static bindings or Unknown.
+      - alert: MatrixAdvisorAdvisorStalled
+        expr: ma_advisor_last_run_age_seconds > 3 * 3600
+        for: 15m
+        annotations:
+          summary: The advisor has not completed a run for 3 hours.
+      - alert: MatrixAdvisorBackupMissing
+        expr: time() - ma_backup_last_success_timestamp_seconds > 2 * 86400 or increase(ma_backup_failures_total[1d]) > 0
+        annotations:
+          summary: No successful backup for 2 days, or a backup failed.

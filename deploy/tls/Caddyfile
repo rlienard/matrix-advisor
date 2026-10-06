@@ -1,0 +1,19 @@
+# HTTPS in front of Matrix Advisor (docker compose -f docker-compose.yml -f deploy/tls/docker-compose.tls.yml up -d).
+#   MA_DOMAIN  name or address the browser uses (default: localhost)
+#   MA_TLS     "internal" (default: certificate from Caddy's own CA, to trust once in the browser),
+#              an e-mail address (public ACME certificate, needs a public DNS name and port 80/443 reachable),
+#              or "/certs/server.crt /certs/server.key" (your own certificate, mounted from ./certs)
+{$MA_DOMAIN:localhost} {
+	tls {$MA_TLS:internal}
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+	# Metrics stay internal: scrape matrix-advisor:8000/metrics on the compose network.
+	respond /metrics 404
+	reverse_proxy matrix-advisor:8000
+}

@@ -609,6 +609,33 @@ class Store:
             )
         return self.proposal(p["id"])
 
+    # ------------------------------------------------------------------ operations
+    def table_rows(self) -> dict[str, int]:
+        with self.lock:
+            rows = self.conn.execute(
+                "SELECT table_name, estimated_size FROM duckdb_tables() WHERE schema_name = 'main'"
+            ).fetchall()
+        return {name: int(n or 0) for name, n in rows}
+
+    def proposal_counts(self) -> dict[str, int]:
+        with self.lock:
+            rows = self.conn.execute("SELECT status, count(*) FROM proposals GROUP BY ALL").fetchall()
+        return {status: int(n) for status, n in rows}
+
+    def backup(self, target: str | Path) -> None:
+        """Consistent copy of the whole database into a new DuckDB file, taken while the app runs.
+
+        Ingest and API queries wait while it runs (the store lock is held)."""
+        path = str(target).replace("'", "''")
+        with self.lock:
+            source = self.conn.execute("SELECT current_database()").fetchone()[0]
+            self.conn.execute("CHECKPOINT")
+            self.conn.execute(f"ATTACH '{path}' AS backup_target")
+            try:
+                self.conn.execute(f'COPY FROM DATABASE "{source}" TO backup_target')
+            finally:
+                self.conn.execute("DETACH backup_target")
+
     def close(self) -> None:
         with self.lock:
             self.conn.close()
