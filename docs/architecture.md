@@ -21,9 +21,16 @@
      `/api/status` counts flow sides attributed from tags (`sgt_from_flow`) and unknown tag values
      (`unknown_tag`).
 3. **Storage** (`matrix_advisor/store.py`, DuckDB).
-   - `flow_minutes`: per-minute aggregates per (SGT pair, protocol, port, source IP, destination IP),
-     7 days. Used for host counts and timing behaviour.
+   - `pair_minutes`: per-minute aggregates per (SGT pair, protocol, port), no address, 7 days. Read by
+     every advisor run and dashboard load (flows, first/last seen, activity, timing), so their cost
+     does not grow with the number of hosts.
+   - `host_daily`: source addresses seen per day and (SGT pair, protocol, port), 7 days. Host counts.
+   - `host_minutes`: (source, destination) address pairs seen per minute and SGT pair, 7 days. Read for
+     one pair at a time to detect periodic (beaconing) behaviour.
+   - Each 5 s ingest batch appends rows; every 10 minutes the last 30 minutes are compacted (rows of the
+     same key merged), then today and yesterday are rolled up.
    - `pair_daily`: daily rollup per (SGT pair, protocol, port), `retention_days`.
+   - Databases of earlier versions (single `flow_minutes` table keyed by addresses) are migrated on start.
    - Raw records staged then written to Parquet every `rotate_minutes` (`parquet_dir/date=…`).
    - `proposals`, `coverage_history`, `audit`, `meta`.
 

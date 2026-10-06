@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import timedelta
 
 from ..config import ConfigStore
-from ..store import Store
+from ..store import Store, utcnow
 from .goflow import ExporterFilter, NDJSONTailer, decode_records, flow_from_record
 from .resolver import SGTResolver
 
@@ -94,7 +95,11 @@ class IngestPipeline:
                 log.info("archived raw flows to %s", path)
             self._last_flush = now
         if now - self._last_rollup >= 600:
-            self.store.rollup_daily()
+            self.store.compact()
+            today = utcnow()
+            # Yesterday too: its last minutes arrived after the last rollup of the day.
+            for day in (today - timedelta(days=1), today):
+                self.store.rollup_daily(day)
             self._last_rollup = now
         if now - self._last_retention >= 3600:
             self.store.apply_retention(c.retention_days)

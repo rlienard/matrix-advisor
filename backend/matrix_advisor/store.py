@@ -3,6 +3,15 @@
 Raw flow records are not kept in DuckDB. They are staged briefly, then archived to
 Parquet files (``collector.parquet_dir``) every ``collector.rotate_minutes``. The
 agent and the dashboard work on aggregates only.
+
+Aggregates are split by what reads them, so that the scans made on every advisor run and
+dashboard load do not grow with the number of hosts:
+- ``pair_minutes``: per minute and (SGT pair, protocol, port), no address. Flows, timing, activity.
+- ``host_daily``: per day and (SGT pair, protocol, port), the source addresses seen. Host counts.
+- ``host_minutes``: per minute and SGT pair, the (source, destination) address pairs seen. Read
+  for one pair at a time, to detect periodic (beaconing) behaviour.
+Each ingest batch appends rows; ``compact`` merges the rows of the same key written by
+successive batches.
 """
 
 from __future__ import annotations
@@ -28,9 +37,15 @@ CREATE TABLE IF NOT EXISTS batch (
   proto VARCHAR, bytes BIGINT, packets BIGINT, src_sgt VARCHAR, dst_sgt VARCHAR
 );
 CREATE TABLE IF NOT EXISTS raw_staging AS SELECT * FROM batch WHERE false;
-CREATE TABLE IF NOT EXISTS flow_minutes (
+CREATE TABLE IF NOT EXISTS pair_minutes (
   minute TIMESTAMP, src_sgt VARCHAR, dst_sgt VARCHAR, proto VARCHAR, port INTEGER,
-  src_ip VARCHAR, dst_ip VARCHAR, flows BIGINT, bytes BIGINT, packets BIGINT
+  flows BIGINT, bytes BIGINT, packets BIGINT
+);
+CREATE TABLE IF NOT EXISTS host_daily (
+  day DATE, src_sgt VARCHAR, dst_sgt VARCHAR, proto VARCHAR, port INTEGER, src_ip VARCHAR, flows BIGINT
+);
+CREATE TABLE IF NOT EXISTS host_minutes (
+  minute TIMESTAMP, src_sgt VARCHAR, dst_sgt VARCHAR, src_ip VARCHAR, dst_ip VARCHAR
 );
 CREATE TABLE IF NOT EXISTS pair_daily (
   day DATE, src_sgt VARCHAR, dst_sgt VARCHAR, proto VARCHAR, port INTEGER,
@@ -51,6 +66,31 @@ CREATE TABLE IF NOT EXISTS audit (ts TIMESTAMP, actor VARCHAR, action VARCHAR, d
 """
 
 DETAIL_RETENTION_DAYS = 7
+COMPACT_WINDOW = timedelta(minutes=30)
+
+# Aggregates of one ingest batch (the ``batch`` table), and the same tables built from the
+# per-minute table of earlier versions (``flow_minutes``, one row per address pair and minute).
+_AGGREGATE = {
+    "pair_minutes": "SELECT date_trunc('minute', ts), src_sgt, dst_sgt, proto, dst_port, count(*), sum(bytes), "
+                    "sum(packets) FROM batch GROUP BY ALL",
+    "host_daily": "SELECT CAST(ts AS DATE), src_sgt, dst_sgt, proto, dst_port, src_ip, count(*) FROM batch GROUP BY ALL",
+    "host_minutes": "SELECT DISTINCT date_trunc('minute', ts), src_sgt, dst_sgt, src_ip, dst_ip FROM batch",
+}
+_MIGRATE = {
+    "pair_minutes": "SELECT minute, src_sgt, dst_sgt, proto, port, sum(flows), sum(bytes), sum(packets) "
+                    "FROM flow_minutes GROUP BY ALL",
+    "host_daily": "SELECT CAST(minute AS DATE), src_sgt, dst_sgt, proto, port, src_ip, sum(flows) "
+                  "FROM flow_minutes GROUP BY ALL",
+    "host_minutes": "SELECT DISTINCT minute, src_sgt, dst_sgt, src_ip, dst_ip FROM flow_minutes",
+}
+# Merge rows of the same key written by successive batches, from ``since`` (a minute, or a day).
+_COMPACT = {
+    "pair_minutes": ("minute", ("SELECT minute, src_sgt, dst_sgt, proto, port, sum(flows), sum(bytes), sum(packets) "
+                                "FROM pair_minutes WHERE minute >= ? GROUP BY ALL")),
+    "host_daily": ("day", ("SELECT day, src_sgt, dst_sgt, proto, port, src_ip, sum(flows) "
+                           "FROM host_daily WHERE day >= ? GROUP BY ALL")),
+    "host_minutes": ("minute", "SELECT DISTINCT * FROM host_minutes WHERE minute >= ?"),
+}
 PROPOSAL_JSON_FIELDS = ("specs", "features", "result")
 
 
@@ -68,6 +108,24 @@ class Store:
         self.lock = threading.RLock()
         with self.lock:
             self.conn.execute(SCHEMA)
+            self._migrate()
+
+    def _migrate(self) -> None:
+        """Rebuild the split aggregates from the single per-minute table of earlier versions."""
+        legacy = self.conn.execute(
+            "SELECT count(*) FROM information_schema.tables WHERE table_name = 'flow_minutes'"
+        ).fetchone()[0]
+        if not legacy:
+            return
+        self.conn.execute("BEGIN TRANSACTION")
+        try:
+            for table, sql in _MIGRATE.items():
+                self.conn.execute(f"INSERT INTO {table} {sql}")
+            self.conn.execute("DROP TABLE flow_minutes")
+            self.conn.execute("COMMIT")
+        except Exception:
+            self.conn.execute("ROLLBACK")
+            raise
 
     # ------------------------------------------------------------------ meta
     def get_meta(self, k: str, default: str | None = None) -> str | None:
@@ -110,14 +168,8 @@ class Store:
                 self.conn.execute(
                     f"COPY batch FROM '{tmp}' (FORMAT CSV, HEADER false, TIMESTAMPFORMAT '%Y-%m-%d %H:%M:%S.%f')"
                 )
-                self.conn.execute(
-                    """
-                    INSERT INTO flow_minutes
-                    SELECT date_trunc('minute', ts), src_sgt, dst_sgt, proto, dst_port, src_ip, dst_ip,
-                           count(*), sum(bytes), sum(packets)
-                    FROM batch GROUP BY ALL
-                    """
-                )
+                for table, sql in _AGGREGATE.items():
+                    self.conn.execute(f"INSERT INTO {table} {sql}")
                 if self.parquet_dir:
                     self.conn.execute("INSERT INTO raw_staging SELECT * FROM batch")
                 last = self.conn.execute("SELECT max(ts) FROM batch").fetchone()[0]
@@ -151,19 +203,41 @@ class Store:
             self.conn.execute(
                 """
                 INSERT INTO pair_daily
-                SELECT CAST(minute AS DATE), src_sgt, dst_sgt, proto, port, sum(flows), sum(bytes),
-                       count(DISTINCT src_ip)
-                FROM flow_minutes WHERE CAST(minute AS DATE) = ? GROUP BY ALL
+                SELECT f.day, f.src_sgt, f.dst_sgt, f.proto, f.port, f.flows, f.bytes, coalesce(h.hosts, 0)
+                FROM (SELECT CAST(minute AS DATE) AS day, src_sgt, dst_sgt, proto, port, sum(flows) AS flows,
+                             sum(bytes) AS bytes
+                      FROM pair_minutes WHERE minute >= ? AND minute < ? GROUP BY ALL) f
+                LEFT JOIN (SELECT src_sgt, dst_sgt, proto, port, count(DISTINCT src_ip) AS hosts
+                           FROM host_daily WHERE day = ? GROUP BY ALL) h
+                USING (src_sgt, dst_sgt, proto, port)
                 """,
-                [day],
+                [datetime.combine(day, time()), datetime.combine(day + timedelta(days=1), time()), day],
             )
+
+    def compact(self, now: datetime | None = None) -> None:
+        """Merge the rows that successive ingest batches wrote for the same key (recent rows only)."""
+        since = (now or utcnow()) - COMPACT_WINDOW
+        with self.lock:
+            self.conn.execute("BEGIN TRANSACTION")
+            try:
+                for table, (column, sql) in _COMPACT.items():
+                    start = since.date() if column == "day" else since
+                    self.conn.execute(f"CREATE OR REPLACE TEMP TABLE compacted AS {sql}", [start])
+                    self.conn.execute(f"DELETE FROM {table} WHERE {column} >= ?", [start])
+                    self.conn.execute(f"INSERT INTO {table} SELECT * FROM compacted")
+                self.conn.execute("DROP TABLE compacted")
+                self.conn.execute("COMMIT")
+            except Exception:
+                self.conn.execute("ROLLBACK")
+                raise
 
     def apply_retention(self, retention_days: int) -> None:
         now = utcnow()
         with self.lock:
-            self.conn.execute(
-                "DELETE FROM flow_minutes WHERE minute < ?", [now - timedelta(days=DETAIL_RETENTION_DAYS)]
-            )
+            detail = now - timedelta(days=DETAIL_RETENTION_DAYS)
+            for table in ("pair_minutes", "host_minutes"):
+                self.conn.execute(f"DELETE FROM {table} WHERE minute < ?", [detail])
+            self.conn.execute("DELETE FROM host_daily WHERE day < ?", [detail.date()])
             self.conn.execute("DELETE FROM pair_daily WHERE day < ?", [(now - timedelta(days=retention_days)).date()])
             self.conn.execute("DELETE FROM coverage_history WHERE ts < ?", [now - timedelta(days=retention_days)])
         if self.parquet_dir and Path(self.parquet_dir).exists():
@@ -187,11 +261,15 @@ class Store:
         with self.lock:
             rows = self.conn.execute(
                 """
-                SELECT src_sgt, dst_sgt, proto, port, sum(flows), sum(bytes), count(DISTINCT src_ip),
-                       min(minute), max(minute)
-                FROM flow_minutes WHERE minute >= ? GROUP BY ALL
+                SELECT f.src_sgt, f.dst_sgt, f.proto, f.port, f.flows, f.bytes, coalesce(h.hosts, 0), f.first, f.last
+                FROM (SELECT src_sgt, dst_sgt, proto, port, sum(flows) AS flows, sum(bytes) AS bytes,
+                             min(minute) AS first, max(minute) AS last
+                      FROM pair_minutes WHERE minute >= ? GROUP BY ALL) f
+                LEFT JOIN (SELECT src_sgt, dst_sgt, proto, port, count(DISTINCT src_ip) AS hosts
+                           FROM host_daily WHERE day >= ? GROUP BY ALL) h
+                USING (src_sgt, dst_sgt, proto, port)
                 """,
-                [recent_from],
+                [recent_from, recent_from.date()],
             ).fetchall()
             if daily_from is not None:
                 rows += self.conn.execute(
@@ -221,8 +299,8 @@ class Store:
         recent_from, daily_from = self._split(since)
         with self.lock:
             rows = self.conn.execute(
-                "SELECT src_sgt, dst_sgt, count(DISTINCT src_ip) FROM flow_minutes WHERE minute >= ? GROUP BY ALL",
-                [recent_from],
+                "SELECT src_sgt, dst_sgt, count(DISTINCT src_ip) FROM host_daily WHERE day >= ? GROUP BY ALL",
+                [recent_from.date()],
             ).fetchall()
             if daily_from is not None:
                 rows += self.conn.execute(
@@ -236,7 +314,7 @@ class Store:
 
     def first_seen(self) -> dict[tuple[str, str], datetime]:
         with self.lock:
-            minutes = self.conn.execute("SELECT src_sgt, dst_sgt, min(minute) FROM flow_minutes GROUP BY ALL").fetchall()
+            minutes = self.conn.execute("SELECT src_sgt, dst_sgt, min(minute) FROM pair_minutes GROUP BY ALL").fetchall()
             days = self.conn.execute("SELECT src_sgt, dst_sgt, min(day) FROM pair_daily GROUP BY ALL").fetchall()
         out: dict[tuple[str, str], datetime] = {(r[0], r[1]): r[2] for r in minutes}
         for src, dst, day in days:
@@ -250,7 +328,7 @@ class Store:
         recent_from, daily_from = self._split(since)
         with self.lock:
             rows = self.conn.execute(
-                "SELECT DISTINCT src_sgt, dst_sgt, CAST(minute AS DATE) FROM flow_minutes WHERE minute >= ?",
+                "SELECT DISTINCT src_sgt, dst_sgt, CAST(minute AS DATE) FROM pair_minutes WHERE minute >= ?",
                 [recent_from],
             ).fetchall()
             if daily_from is not None:
@@ -266,7 +344,7 @@ class Store:
     def observation_start(self) -> datetime | None:
         """Oldest traffic still held (detailed minutes or daily rollups)."""
         with self.lock:
-            minute = self.conn.execute("SELECT min(minute) FROM flow_minutes").fetchone()[0]
+            minute = self.conn.execute("SELECT min(minute) FROM pair_minutes").fetchone()[0]
             day = self.conn.execute("SELECT min(day) FROM pair_daily").fetchone()[0]
         candidates = [x for x in (minute, datetime.combine(day, time()) if day else None) if x is not None]
         return min(candidates) if candidates else None
@@ -277,14 +355,14 @@ class Store:
             hours = self.conn.execute(
                 """
                 SELECT hour(minute) AS h, isodow(minute) AS d, sum(flows)
-                FROM flow_minutes WHERE src_sgt = ? AND dst_sgt = ? AND minute >= ? GROUP BY ALL
+                FROM pair_minutes WHERE src_sgt = ? AND dst_sgt = ? AND minute >= ? GROUP BY ALL
                 """,
                 [src, dst, since],
             ).fetchall()
             series = self.conn.execute(
                 """
                 SELECT src_ip, dst_ip, list(epoch(minute) ORDER BY minute)
-                FROM (SELECT DISTINCT src_ip, dst_ip, minute FROM flow_minutes
+                FROM (SELECT DISTINCT src_ip, dst_ip, minute FROM host_minutes
                       WHERE src_sgt = ? AND dst_sgt = ? AND minute >= ?)
                 GROUP BY ALL
                 """,
@@ -316,7 +394,7 @@ class Store:
     def flow_rate(self, minutes: int = 5) -> float:
         with self.lock:
             row = self.conn.execute(
-                "SELECT sum(flows) FROM flow_minutes WHERE minute >= ?", [utcnow() - timedelta(minutes=minutes)]
+                "SELECT sum(flows) FROM pair_minutes WHERE minute >= ?", [utcnow() - timedelta(minutes=minutes)]
             ).fetchone()
         return round((row[0] or 0) / (minutes * 60), 1)
 

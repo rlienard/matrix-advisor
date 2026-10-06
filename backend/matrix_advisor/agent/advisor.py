@@ -219,7 +219,7 @@ class Advisor:
             "ports": [{"spec": p["spec"], "flows": p["flows"], "hosts": p["hosts"]} for p in obs["ports"]],
             "total_flows": obs["flows"], "source_hosts": obs["hosts"],
             "first_seen": obs["first_seen"].date().isoformat() if obs.get("first_seen") else None,
-            "behaviour": self.store.pair_behaviour(src, dst, utcnow() - timedelta(days=7)),
+            "behaviour": await asyncio.to_thread(self.store.pair_behaviour, src, dst, utcnow() - timedelta(days=7)),
             "activity": obs.get("activity") or {},
             "cell_contracts": cov["contracts"],
             "src_unknown": src == m.unknown_name, "dst_unknown": to_unknown,
@@ -280,7 +280,8 @@ class Advisor:
         """Create or refresh proposals for uncovered pairs. Returns the number created."""
         if self.ise.matrix.synced_at is None:
             return 0
-        views = self.pair_views(utcnow() - self.analysis_window())
+        # Database scans run in a worker thread: the event loop keeps serving the API meanwhile.
+        views = await asyncio.to_thread(self.pair_views, utcnow() - self.analysis_window())
         allowed = sum(1 for v in views if v["coverage"]["status"] == "allowed")
         partial = sum(1 for v in views if v["coverage"]["status"] == "partial")
         self.store.record_coverage(len(views), allowed, partial, len(views) - allowed - partial)
@@ -288,20 +289,26 @@ class Advisor:
             return 0
         created = 0
         llm_calls = 0
+        pending = {(p["src"], p["dst"]): p for p in await asyncio.to_thread(self.store.proposals, "pending")}
         for v in sorted(views, key=lambda x: -x["flows"]):
             cov = v["coverage"]
             src, dst = v["src"], v["dst"]
-            open_p = self.store.open_proposal_for(src, dst)
+            open_p = pending.get((src, dst))
+            # ``pending`` was read before the loop: a proposal decided or edited since then is left alone.
             if cov["status"] == "allowed":
                 if open_p:  # covered meanwhile (e.g. fixed directly in ISE)
-                    self.store.save_proposal({**open_p, "status": "superseded"})
+                    self.store.save_proposal_if_unchanged({**open_p, "status": "superseded"}, open_p["updated_at"])
                 continue
             uncovered = set(cov["uncovered"])
             if open_p:
                 if set(open_p["specs"]) >= {p["spec"] for p in v["ports"]} or open_p.get("edited_acl"):
                     continue
-                self.store.save_proposal({**open_p, "status": "superseded"})
+                if self.store.save_proposal_if_unchanged({**open_p, "status": "superseded"},
+                                                         open_p["updated_at"]) is None:
+                    continue
             else:
+                if self.store.open_proposal_for(src, dst):  # reopened meanwhile
+                    continue
                 last = self.store.last_decision_for(src, dst)
                 if last and last["status"] == "rejected" and uncovered <= set(last["specs"] or []):
                     continue
