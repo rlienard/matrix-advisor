@@ -72,3 +72,48 @@ def test_legacy_flow_minutes_are_migrated(tmp_path):
     assert store.pair_behaviour("Employees", "Web_Servers", minute - timedelta(minutes=1))["host_pairs"] == 5
     store.close()
     Store(path).close()  # opening again is a no-op
+
+
+def test_folding_host_minutes_keeps_behaviour_identical():
+    import random
+
+    random.seed(7)
+    store = Store(":memory:")
+    now = utcnow().replace(second=0, microsecond=0)
+    start = now - timedelta(days=3)
+    rows = []
+    for i in range(3 * 24 * 4):  # every 15 minutes for 3 days: periodic, across midnights
+        rows.append(_row(start + timedelta(minutes=15 * i), "10.1.0.9", "10.2.0.1", 443))
+    for i in range(400):  # irregular host pair
+        rows.append(_row(start + timedelta(minutes=random.randint(0, 3 * 24 * 60)), "10.1.0.8", "10.2.0.1", 443))
+    for i in range(3):  # too few minutes to judge
+        rows.append(_row(start + timedelta(hours=i), "10.1.0.7", "10.2.0.1", 443))
+    store.ingest(rows)
+    since = now - timedelta(days=7)
+    expected = store.pair_behaviour("Employees", "Web_Servers", since)
+    assert expected["host_pairs"] == 3 and expected["periodic_host_pairs"] == 1
+    assert expected["periodic_interval_s"] == 900
+
+    # Fold progressively, as compaction does every 10 minutes, then completely.
+    for hours in [*range(72, 0, -7), 0]:
+        store.fold_host_minutes(now - timedelta(hours=hours))
+        assert store.pair_behaviour("Employees", "Web_Servers", since) == expected
+    # Only the last half hour stays as minutes.
+    assert store.conn.execute("SELECT min(minute) FROM host_minutes").fetchone()[0] >= now - timedelta(minutes=30)
+    rows = store.conn.execute("SELECT count(*) FROM host_pair_daily").fetchone()[0]
+    assert rows <= 3 * 4  # one row per address pair and day, not per active minute
+
+
+def test_minutes_arriving_after_their_fold_are_left_out():
+    store = Store(":memory:")
+    now = utcnow().replace(second=0, microsecond=0)
+    store.ingest([_row(now - timedelta(hours=2, minutes=10 * i), "10.1.0.9", "10.2.0.1", 443) for i in range(6)])
+    assert store.fold_host_minutes(now) == 6
+    late = now - timedelta(hours=3)
+    store.ingest([_row(late, "10.1.0.9", "10.2.0.1", 443)])
+    store.fold_host_minutes(now + timedelta(minutes=10))
+    assert store.conn.execute("SELECT count(*) FROM host_minutes").fetchone()[0] == 0
+    [(minutes,)] = store.conn.execute("SELECT sum(minutes) FROM host_pair_daily").fetchall()
+    assert minutes == 6
+    # Flow counts still include the late flow.
+    assert store.pair_ports(now - timedelta(days=1))[0]["flows"] == 7

@@ -8,8 +8,12 @@ Aggregates are split by what reads them, so that the scans made on every advisor
 dashboard load do not grow with the number of hosts:
 - ``pair_minutes``: per minute and (SGT pair, protocol, port), no address. Flows, timing, activity.
 - ``host_daily``: per day and (SGT pair, protocol, port), the source addresses seen. Host counts.
-- ``host_minutes``: per minute and SGT pair, the (source, destination) address pairs seen. Read
-  for one pair at a time, to detect periodic (beaconing) behaviour.
+- ``host_minutes``: per minute and SGT pair, the (source, destination) address pairs seen, for the
+  last half hour or so only: ``compact`` folds older minutes into ``host_pair_daily``.
+- ``host_pair_daily``: per day and address pair, the statistics of the gaps between the minutes the
+  pair was active (count, sum, sum of squares). Read for one SGT pair at a time to detect periodic
+  (beaconing) behaviour, with the same result as from the minutes themselves, at one row per address
+  pair and day instead of one per active minute.
 Each ingest batch appends rows; ``compact`` merges the rows of the same key written by
 successive batches.
 """
@@ -19,12 +23,14 @@ from __future__ import annotations
 import csv
 import itertools
 import json
+import math
 import os
 import statistics
 import tempfile
 import threading
 import uuid
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
@@ -47,6 +53,10 @@ CREATE TABLE IF NOT EXISTS host_daily (
 CREATE TABLE IF NOT EXISTS host_minutes (
   minute TIMESTAMP, src_sgt VARCHAR, dst_sgt VARCHAR, src_ip VARCHAR, dst_ip VARCHAR
 );
+CREATE TABLE IF NOT EXISTS host_pair_daily (
+  day DATE, src_sgt VARCHAR, dst_sgt VARCHAR, src_ip VARCHAR, dst_ip VARCHAR,
+  first_minute TIMESTAMP, last_minute TIMESTAMP, minutes BIGINT, gap_sum DOUBLE, gap_sq DOUBLE
+);
 CREATE TABLE IF NOT EXISTS pair_daily (
   day DATE, src_sgt VARCHAR, dst_sgt VARCHAR, proto VARCHAR, port INTEGER,
   flows BIGINT, bytes BIGINT, hosts INTEGER
@@ -67,6 +77,10 @@ CREATE TABLE IF NOT EXISTS audit (ts TIMESTAMP, actor VARCHAR, action VARCHAR, d
 
 DETAIL_RETENTION_DAYS = 7
 COMPACT_WINDOW = timedelta(minutes=30)
+# Minutes older than this are folded into host_pair_daily; flows arriving later than that for an
+# address pair already folded past are left out of the periodicity statistics (not of the counts).
+FOLD_LAG = timedelta(minutes=30)
+HOST_PAIR_KEY = "day, src_sgt, dst_sgt, src_ip, dst_ip"
 
 # Aggregates of one ingest batch (the ``batch`` table), and the same tables built from the
 # per-minute table of earlier versions (``flow_minutes``, one row per address pair and minute).
@@ -92,6 +106,36 @@ _COMPACT = {
     "host_minutes": ("minute", "SELECT DISTINCT * FROM host_minutes WHERE minute >= ?"),
 }
 PROPOSAL_JSON_FIELDS = ("specs", "features", "result")
+
+
+@dataclass(frozen=True)
+class GapStats:
+    """Active minutes of an address pair (epoch seconds) summarised by the gaps between them."""
+
+    first: float
+    last: float
+    minutes: int
+    gap_sum: float
+    gap_sq: float
+
+    @classmethod
+    def of(cls, minutes: list[float]) -> GapStats:
+        gaps = [b - a for a, b in itertools.pairwise(minutes)]
+        return cls(minutes[0], minutes[-1], len(minutes), sum(gaps), sum(g * g for g in gaps))
+
+    @staticmethod
+    def join(a: GapStats | None, b: GapStats) -> GapStats:
+        """``b`` follows ``a`` in time: one more gap between the two."""
+        if a is None:
+            return b
+        cross = b.first - a.last
+        return GapStats(a.first, b.last, a.minutes + b.minutes, a.gap_sum + b.gap_sum + cross,
+                        a.gap_sq + b.gap_sq + cross * cross)
+
+    def mean_pstdev(self) -> tuple[float, float]:
+        n = self.minutes - 1
+        mean = self.gap_sum / n
+        return mean, math.sqrt(max(self.gap_sq / n - mean * mean, 0.0))
 
 
 def utcnow() -> datetime:
@@ -230,6 +274,64 @@ class Store:
             except Exception:
                 self.conn.execute("ROLLBACK")
                 raise
+        self.fold_host_minutes(now)
+
+    def _folded_until(self) -> datetime:
+        done = self.get_meta("host_minutes_folded_until")
+        return datetime.fromisoformat(done) if done else datetime.fromtimestamp(0, UTC).replace(tzinfo=None)
+
+    def fold_host_minutes(self, now: datetime | None = None) -> int:
+        """Fold host_minutes older than FOLD_LAG into host_pair_daily. Returns the minutes folded."""
+        upto = ((now or utcnow()) - FOLD_LAG).replace(second=0, microsecond=0)
+        with self.lock:
+            start = self._folded_until()
+            if upto <= start:
+                return 0
+            self.conn.execute("BEGIN TRANSACTION")
+            try:
+                # Each address pair's active minutes of the chunk, by day: count, gaps and squared gaps.
+                self.conn.execute(
+                    f"""
+                    CREATE OR REPLACE TEMP TABLE chunk AS
+                    WITH m AS (SELECT DISTINCT CAST(minute AS DATE) AS day, src_sgt, dst_sgt, src_ip, dst_ip, minute
+                               FROM host_minutes WHERE minute >= ? AND minute < ?),
+                         g AS (SELECT *, epoch(minute) - epoch(lag(minute) OVER (
+                                   PARTITION BY {HOST_PAIR_KEY} ORDER BY minute)) AS gap FROM m)
+                    SELECT {HOST_PAIR_KEY}, min(minute) AS first_minute, max(minute) AS last_minute,
+                           count(*) AS minutes, coalesce(sum(gap), 0) AS gap_sum, coalesce(sum(gap * gap), 0) AS gap_sq
+                    FROM g GROUP BY ALL
+                    """,
+                    [start, upto],
+                )
+                # Appended to what the day already holds: the chunk starts after everything folded before,
+                # so the only new gap is the one between the two.
+                self.conn.execute(
+                    f"""
+                    CREATE OR REPLACE TEMP TABLE merged AS
+                    SELECT {", ".join("c." + k for k in HOST_PAIR_KEY.split(", "))},
+                           coalesce(o.first_minute, c.first_minute), c.last_minute,
+                           coalesce(o.minutes, 0) + c.minutes,
+                           coalesce(o.gap_sum, 0) + c.gap_sum + coalesce(epoch(c.first_minute) - epoch(o.last_minute), 0),
+                           coalesce(o.gap_sq, 0) + c.gap_sq
+                               + coalesce(pow(epoch(c.first_minute) - epoch(o.last_minute), 2), 0)
+                    FROM chunk c LEFT JOIN host_pair_daily o USING ({HOST_PAIR_KEY})
+                    """
+                )
+                self.conn.execute(
+                    "DELETE FROM host_pair_daily h USING chunk c WHERE "
+                    + " AND ".join(f"h.{k} = c.{k}" for k in HOST_PAIR_KEY.split(", "))
+                )
+                self.conn.execute("INSERT INTO host_pair_daily SELECT * FROM merged")
+                folded = self.conn.execute("SELECT coalesce(sum(minutes), 0) FROM chunk").fetchone()[0]
+                self.conn.execute("DELETE FROM host_minutes WHERE minute < ?", [upto])
+                self.conn.execute("DROP TABLE chunk")
+                self.conn.execute("DROP TABLE merged")
+                self.set_meta("host_minutes_folded_until", upto.isoformat())
+                self.conn.execute("COMMIT")
+            except Exception:
+                self.conn.execute("ROLLBACK")
+                raise
+        return int(folded)
 
     def apply_retention(self, retention_days: int) -> None:
         now = utcnow()
@@ -237,7 +339,8 @@ class Store:
             detail = now - timedelta(days=DETAIL_RETENTION_DAYS)
             for table in ("pair_minutes", "host_minutes"):
                 self.conn.execute(f"DELETE FROM {table} WHERE minute < ?", [detail])
-            self.conn.execute("DELETE FROM host_daily WHERE day < ?", [detail.date()])
+            for table in ("host_daily", "host_pair_daily"):
+                self.conn.execute(f"DELETE FROM {table} WHERE day < ?", [detail.date()])
             self.conn.execute("DELETE FROM pair_daily WHERE day < ?", [(now - timedelta(days=retention_days)).date()])
             self.conn.execute("DELETE FROM coverage_history WHERE ts < ?", [now - timedelta(days=retention_days)])
         if self.parquet_dir and Path(self.parquet_dir).exists():
@@ -359,25 +462,38 @@ class Store:
                 """,
                 [src, dst, since],
             ).fetchall()
-            series = self.conn.execute(
+            folded_until = self._folded_until()
+            # Folded days (whole days since ``since``), then the minutes not folded yet, in time order.
+            days = self.conn.execute(
+                """
+                SELECT src_ip, dst_ip, epoch(first_minute), epoch(last_minute), minutes, gap_sum, gap_sq
+                FROM host_pair_daily WHERE src_sgt = ? AND dst_sgt = ? AND day >= ? ORDER BY day
+                """,
+                [src, dst, since.date()],
+            ).fetchall()
+            recent = self.conn.execute(
                 """
                 SELECT src_ip, dst_ip, list(epoch(minute) ORDER BY minute)
                 FROM (SELECT DISTINCT src_ip, dst_ip, minute FROM host_minutes
                       WHERE src_sgt = ? AND dst_sgt = ? AND minute >= ?)
                 GROUP BY ALL
                 """,
-                [src, dst, since],
+                [src, dst, max(since, folded_until)],
             ).fetchall()
+        series: dict[tuple[str, str], GapStats] = {}
+        for s_ip, d_ip, *stats in days:
+            series[(s_ip, d_ip)] = GapStats.join(series.get((s_ip, d_ip)), GapStats(*stats))
+        for s_ip, d_ip, minutes in recent:
+            series[(s_ip, d_ip)] = GapStats.join(series.get((s_ip, d_ip)), GapStats.of(minutes))
         total = sum(r[2] for r in hours) or 1
         off = sum(r[2] for r in hours if r[0] < 7 or r[0] >= 20 or r[1] >= 6)
         periodic = 0
         intervals_s: list[float] = []
-        for _, _, minutes in series:
-            if len(minutes) < 6:
+        for g in series.values():
+            if g.minutes < 6:
                 continue
-            gaps = [b - a for a, b in itertools.pairwise(minutes)]
-            mean = statistics.mean(gaps)
-            if mean >= 120 and statistics.pstdev(gaps) / mean < 0.15:
+            mean, pstdev = g.mean_pstdev()
+            if mean >= 120 and pstdev / mean < 0.15:
                 periodic += 1
                 intervals_s.append(mean)
         return {

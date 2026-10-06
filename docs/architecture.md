@@ -25,10 +25,15 @@
      every advisor run and dashboard load (flows, first/last seen, activity, timing), so their cost
      does not grow with the number of hosts.
    - `host_daily`: source addresses seen per day and (SGT pair, protocol, port), 7 days. Host counts.
-   - `host_minutes`: (source, destination) address pairs seen per minute and SGT pair, 7 days. Read for
-     one pair at a time to detect periodic (beaconing) behaviour.
+   - `host_minutes`: (source, destination) address pairs seen per minute and SGT pair, last half hour only.
+   - `host_pair_daily`: per day and address pair, the gaps between its active minutes summarised as count,
+     sum and sum of squares, 7 days. Older minutes of `host_minutes` are folded into it; the periodicity
+     (beaconing) test reads it for one SGT pair at a time and gets the same result as from the minutes,
+     at one row per address pair and day instead of one per active minute (about 600 M rows a week at
+     5,000 flows/s down to under 1 M). Minutes arriving after their half hour was folded are left out of
+     the periodicity test only.
    - Each 5 s ingest batch appends rows; every 10 minutes the last 30 minutes are compacted (rows of the
-     same key merged), then today and yesterday are rolled up.
+     same key merged), older host minutes are folded, then today and yesterday are rolled up.
    - `pair_daily`: daily rollup per (SGT pair, protocol, port), `retention_days`.
    - Databases of earlier versions (single `flow_minutes` table keyed by addresses) are migrated on start.
    - Raw records staged then written to Parquet every `rotate_minutes` (`parquet_dir/date=…`).
