@@ -13,6 +13,8 @@ SD-Access and Default-Deny without Tears**.
 > Status: MVP. Tested against the bundled ISE simulator and GoFlow2; validate against your own
 > ISE version in a lab before pointing it at production.
 
+![Dashboard: flows between SGTs, matrix coverage and pending proposals](docs/screenshots/dashboard.png)
+
 ---
 
 ## What it does
@@ -20,7 +22,10 @@ SD-Access and Default-Deny without Tears**.
 - **Learns the real traffic matrix.** Switches export NetFlow v9/IPFIX to GoFlow2. Each flow is
   oriented (client → service port), attributed to source/destination SGTs (the group tags exported in
   the flow record when switches send them, otherwise pxGrid sessions, SXP/static bindings) and
-  aggregated per SGT pair in DuckDB. Raw flows are archived to Parquet.
+  aggregated per SGT pair, protocol and port in DuckDB. The aggregates the advisor reads carry no
+  address, so their size depends on the number of SGT pairs, not of hosts; per-host data is kept only
+  for host counts and the beaconing test, folded to one row per address pair and day. Raw flows are
+  archived to Parquet.
 - **Compares with the ISE matrix.** SGTs, SGACLs and egress matrix cells are read from ISE (ERS API)
   and re-read periodically and on pxGrid change notifications. ISE stays the source of truth.
 - **Proposes the smallest change.** For each SGT pair that default-deny would break, the engine:
@@ -32,7 +37,42 @@ SD-Access and Default-Deny without Tears**.
   and rates the risk. Deterministic heuristics (beaconing, database access from few hosts, off-hours,
   admin ports, scans) are a floor the model cannot lower, and the full answer when the model is offline.
 - **Keeps a human in the loop.** Proposals are grouped per SGT pair on a dashboard (Sankey of flows,
-  coverage, what would be blocked if you switched now). The admin approves, rejects or edits each one.
+  coverage, what would be blocked if you switched now). The admin approves, rejects or edits each one,
+  or selects several pending proposals to approve or reject them in bulk.
+- **Stays in sync with ISE.** A pxGrid notification or a burst of approvals leads to one debounced
+  re-read of the matrix; the cell just written is re-read at once so the dashboard is exact for it.
+- **Bilingual.** French or English for the whole application, agent justifications included.
+- **Ready to operate.** HTTPS through a Caddy overlay, a Prometheus `/metrics` endpoint with alert
+  rules (no flows, ingest backlog, UDP drops, ISE or pxGrid down) and scheduled backups
+  ([docs/operations.md](docs/operations.md)).
+
+## Tour of the dashboard
+
+The top of the dashboard answers *can I switch to default-deny now?*: matrix coverage, pending
+proposals by kind (extension, reuse, new, towards Unknown), how many observed flows the switch would
+block, and rejected proposals. Below, a Sankey shows the flows between SGTs coloured by coverage
+(allowed in the ISE matrix, partially covered, not covered, rejected), with a filter (SGT, port,
+protocol, contract) and a 24 h / 7 d / 30 d period. *Uncovered pairs* tracks the convergence towards
+default-deny, and *Blocked if switched now* lists what would break today.
+
+Clicking a proposal or a ribbon opens the pair: observed ports, hosts and activity, the agent's
+justification and risk, and the SGACL it proposes.
+
+| Extend an existing contract | Edit a shared contract: forced clone | Beaconing towards Unknown |
+| --- | --- | --- |
+| ![Employees to HR_Servers: HR_Portal already permits 443, the agent adds 8443](docs/screenshots/pair-extend.png) | ![Contractors to Web_Servers: removing port 80 from Web_Access would break Employees, so the edit becomes a clone](docs/screenshots/pair-clone.png) | ![IoT cameras beaconing to the Internet, rated high risk](docs/screenshots/pair-risk.png) |
+| `HR_Portal` already permits TCP/443 on the cell: only the new port 8443 is added. | `Web_Access` is shared with `Employees → Web_Servers`, which still uses port 80: the impact analysis blocks the in-place change and proposes the clone `MA_Web_Access_Contractors`. | Cameras reaching the Internet every 5 minutes: beaconing, rated high risk (*To check*). The egress firewall is on, so the cell would get `Permit IP`; edit it to narrow it down. |
+
+The SGACL editor is locked until *Edit*; the syntax is checked as you type and the clone or in-place
+choice appears only after *Confirm edit*. Every approval re-reads the cell from ISE before writing.
+
+Settings live in the application (*Settings*): AI model, Cisco ISE (cluster, pxGrid, advanced
+options), NetFlow collector and language, each page with its own test button and status line.
+
+![Settings: Cisco ISE cluster](docs/screenshots/settings-ise.png)
+
+The screenshots come from the bundled demo (ISE simulator and traffic generator) with no LLM attached,
+so justifications are the heuristic ones (badge *Heuristic*).
 
 ## Safety rules
 
@@ -44,7 +84,7 @@ SD-Access and Default-Deny without Tears**.
 | Monitor first | New cells are written in `MONITOR` status by default (`ise.write_mode: monitor`). Existing cells keep their status. |
 | Ownership | Created SGACLs carry a configurable prefix (`MA_`) and a description pointing to the proposal. Every decision is in the audit log. |
 | Learning phase | Nothing is proposed during the first `learning_days` (14 by default), so the admin gets a stable list instead of a stream. |
-| Rare-flow guard | Proposals and impact analysis use the whole retained history (30 days), not just the last week. Pairs seen on only one or two days are flagged *Flux rare* and sent to review, and the dashboard warns until a full month of traffic has been observed. |
+| Rare-flow guard | Proposals and impact analysis use the whole retained history (30 days), not just the last week. Pairs seen on only one or two days are flagged *Rare flow* and sent to review, and the dashboard warns until a full month of traffic has been observed. |
 
 ## Architecture
 
@@ -54,7 +94,7 @@ flowchart LR
   GF -- JSON lines --> ING[Ingest\norient · resolve SGT]
   ISE[(Cisco ISE)] -- ERS: SGT, SGACL, cells --> SYNC[Matrix cache]
   ISE -- pxGrid: sessions, SXP, change topics --> ING
-  ING --> DB[(DuckDB\nper-minute aggregates)]
+  ING --> DB[(DuckDB\nIP-free aggregates per SGT pair)]
   ING --> PQ[(Parquet archive)]
   DB --> ADV[Advisor\ncoverage · extend/reuse/new]
   SYNC --> ADV
@@ -93,8 +133,8 @@ cameras and guests. Within a minute you get proposals for the scenarios used in 
   impact analysis forces a **clone**, because `Employees → Web_Servers` still uses port 80;
 - `Contractors → Finance_DB`: SQL from three laptops → **high risk**;
 - `IoT_Cameras → Unknown`: one connection every 5 minutes to the Internet (SGT 0) → **beaconing**,
-  high risk. Towards Unknown the proposal depends on *Pare-feu entre le LAN et Internet*
-  (Configuration › Cisco ISE › Options avancées): on (default), the cell stays permissive with the
+  high risk. Towards Unknown the proposal depends on *Firewall between the LAN and the Internet*
+  (Settings › Cisco ISE › Advanced options): on (default), the cell stays permissive with the
   built-in `Permit IP` and the firewall does the filtering; off, least privilege as for any pair;
 - conflict on approval: simulate an administrator changing the cell behind the advisor's back, then
   approve `IT_Admins → Finance_DB`:
@@ -110,7 +150,8 @@ outbound requests, so nothing is configured on GitHub. Follow it with
 deploys immediately and `update.sh --reset` also wipes the demo data.
 
 Without a GPU, the demo still works: if the LLM does not answer in time, proposals carry the
-heuristic analysis (badge “Heuristique”).
+heuristic analysis (badge *Heuristic*). The demo starts in French; switch to English in
+Settings › Language.
 
 ## Production deployment
 
@@ -123,7 +164,7 @@ heuristic analysis (badge “Heuristique”).
   optional, on an explicit click, audited) needs rights on certificates.
 - **pxGrid**: enable pxGrid on at least one node (a second one can be set as fallback). Use
   certificate authentication (recommended: generate a self-signed client certificate from
-  *Configuration › Cisco ISE › pxGrid*, or upload one) or password authentication. Approve the
+  *Settings › Cisco ISE › pxGrid*, or upload one) or password authentication. Approve the
   `matrix-advisor` client the first time it connects.
 - Matrix Advisor subscribes to the session and TrustSec configuration topics; if websockets are not
   reachable it falls back to polling.
@@ -169,15 +210,15 @@ mkdir certs                     # pxGrid client cert/key and ISE CA, mounted rea
 docker compose up -d --build
 ```
 
-Then open the UI and go to **Configuration**:
+Then open the UI and go to **Settings**:
 
-- *Modèle IA*: provider, *Locale* (same machine: only the port; inside a container the host is found
-  automatically, `MA_LLM_LOCAL_HOST` overrides it) or *Distante* (endpoint URL); the model list is
+- *AI model*: provider, *Local* (same machine: only the port; inside a container the host is found
+  automatically, `MA_LLM_LOCAL_HOST` overrides it) or *Remote* (endpoint URL); the model list is
   read from Ollama or vLLM each time the dropdown opens.
-- *Cisco ISE*: *Cluster ISE* (PAN, API account, ISE certificate chain and TLS verification; saving
-  scans the cluster), *pxGrid* (nodes from the scan, client certificate), *Options avancées* (write
+- *Cisco ISE*: *ISE cluster* (PAN, API account, ISE certificate chain and TLS verification; saving
+  scans the cluster), *pxGrid* (nodes from the scan, client certificate), *Advanced options* (write
   mode, prefix, reconciliation, default policy, egress firewall, lab base URLs).
-- *Collecteur NetFlow* and *Langue*.
+- *NetFlow collector* and *Language*.
 
 Each page has its own test button and status line; saving tests the service of the page. Settings
 are saved to `/data/config.yaml`; secrets go to `/data/secrets.json` (mode 0600) unless provided as
@@ -195,6 +236,14 @@ daily backups are described in [docs/operations.md](docs/operations.md):
 ```bash
 MA_DOMAIN=matrix-advisor.example.net docker compose -f docker-compose.yml -f deploy/tls/docker-compose.tls.yml up -d
 ```
+
+### Sizing
+
+One VM runs the whole stack for a campus exporting up to about 5,000 flows/s. Flows are attributed
+to SGTs with one dictionary probe per prefix length, and the advisor reads aggregates without
+addresses: an advisor run over 20 million flows takes well under a second, and runs in a worker
+thread so the API stays responsive. Per-host beaconing statistics are folded to one row per address
+pair and day (under a million rows a week at that rate instead of hundreds of millions).
 
 ## Configuration reference
 
@@ -259,7 +308,7 @@ cd frontend && npm install && npm run dev
   A job that runs less often than that, or has not run yet, is not protected: the dashboard warns
   until 30 days have been observed, and cloning by default limits the blast radius.
 - **Single matrix**, IPv4 SGACL generation, one administrator account.
-- **Language**: French or English, one global setting (`ui.language`, Configuration > Language) for every
+- **Language**: French or English, one global setting (`ui.language`, Settings › Language) for every
   user: web UI, API messages and agent justifications. Changing it rewrites the stored justifications: pending
   proposals are re-analysed, decided ones are only translated (their risk and recommendation do not change).
 - The ISE simulator implements just enough of ERS/pxGrid for demos and tests; it is not a reference.
