@@ -35,7 +35,8 @@ frontend/src/          React + TS: components/{Dashboard,Sankey,Trend,PairPanel,
                        acl.ts mirrors policy/acl.py for live feedback, messages.ts + i18n.tsx (FR/EN, useI18n)
 simulators/ise_sim/    fake ISE (ERS, deployment nodes, pxGrid REST + STOMP pubsub, /sim/conflict|session|reset|state)
 simulators/flowgen/    IPFIX generator with the demo scenarios (no dependencies; --sgt adds CTS group tags)
-deploy/                config templates (example, demo, lima), goflow2/mapping.yaml, lima/lima-demo.sh
+deploy/                config templates (example, demo, lima), goflow2/mapping.yaml, lima/lima-demo.sh,
+                       lima/update.sh (continuous deployment of main in the VM)
 ```
 
 ## Commands
@@ -93,8 +94,8 @@ MA_CONFIG_TEMPLATE=/app/deploy/config.demo.yaml docker compose --profile demo --
 - Never push to `main`. Every change, documentation included, goes on a branch (`claude/<topic>`) and
   through a pull request that the author reviews and merges. Run the backend and frontend checks above
   before opening it.
-- The Lima demo (`deploy/lima/lima-demo.sh`) pulls `main`: a change reaches the local test VM once its
-  PR is merged.
+- The Lima test VM deploys `main` continuously (`deploy/lima/update.sh`, systemd user timer installed by
+  `lima-demo.sh`): a change reaches it a few minutes after its PR is merged, once CI is green on `main`.
 
 ## Conventions
 

@@ -30,15 +30,17 @@ elif [ "$(limactl list --format '{{.Status}}' "$VM")" != "Running" ]; then
   limactl start --tty=false "$VM"
 fi
 
-# 3. Clone or update the repo inside the VM and start the stack
+# 3. Clone the repo inside the VM, deploy main now, then keep it deployed:
+#    a systemd timer rebuilds the stack after each merge on main whose CI is green (deploy/lima/update.sh).
 limactl shell "$VM" bash -s -- "$REPO" <<'EOS'
 set -euo pipefail
 cd ~
 [ -d matrix-advisor ] || git clone "$1" matrix-advisor
 cd matrix-advisor
-git pull --ff-only
-export MA_CONFIG_TEMPLATE=/app/deploy/config.lima.yaml
-docker compose -f docker-compose.yml -f deploy/lima/docker-compose.lima.yml --profile demo up -d --build
+git checkout -q main
+git pull -q --ff-only
+./deploy/lima/update.sh --force
+./deploy/lima/update.sh --install
 echo
 echo "Mot de passe administrateur :"
 for _ in $(seq 30); do
@@ -50,4 +52,7 @@ EOS
 echo
 echo "Interface : http://localhost:8080"
 echo "Logs      : limactl shell $VM -- bash -c 'cd ~/matrix-advisor && docker compose logs -f matrix-advisor'"
+echo "Déploiement continu : chaque merge sur main (CI verte) reconstruit la démo dans la VM."
+echo "  Suivi   : limactl shell $VM -- journalctl --user -u matrix-advisor-update -f"
+echo "  Remise à zéro : limactl shell $VM -- ~/matrix-advisor/deploy/lima/update.sh --reset"
 echo "Arrêt     : limactl stop $VM"

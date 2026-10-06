@@ -102,7 +102,12 @@ cameras and guests. Within a minute you get proposals for the scenarios used in 
 
 **On a Mac with Lima** (no Docker Desktop needed): `brew install lima ollama`, then
 `./deploy/lima/lima-demo.sh`. The script creates a VM with Docker, starts the demo inside it and
-uses Ollama running natively on the Mac (Metal GPU) through `host.lima.internal`.
+uses Ollama running natively on the Mac (Metal GPU) through `host.lima.internal`. It also installs
+a continuous-deployment timer in the VM (`deploy/lima/update.sh`): every 2 minutes it checks `main`,
+and when a new commit has passed CI it rebuilds the stack and waits for `/healthz`. The VM only makes
+outbound requests, so nothing is configured on GitHub. Follow it with
+`limactl shell matrix-advisor -- journalctl --user -u matrix-advisor-update -f`; `update.sh --force`
+deploys immediately and `update.sh --reset` also wipes the demo data.
 
 Without a GPU, the demo still works: if the LLM does not answer in time, proposals carry the
 heuristic analysis (badge “Heuristique”).
